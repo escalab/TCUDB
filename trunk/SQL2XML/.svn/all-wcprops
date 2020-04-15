@@ -1,0 +1,41 @@
+K 25
+svn:wc:ra_dav:version-url
+V 31
+/svn/!svn/ver/587/trunk/SQL2XML
+END
+YSmartParser.py
+K 25
+svn:wc:ra_dav:version-url
+V 47
+/svn/!svn/ver/537/trunk/SQL2XML/YSmartParser.py
+END
+YSmart.g
+K 25
+svn:wc:ra_dav:version-url
+V 40
+/svn/!svn/ver/537/trunk/SQL2XML/YSmart.g
+END
+YSmartLexer.py
+K 25
+svn:wc:ra_dav:version-url
+V 46
+/svn/!svn/ver/537/trunk/SQL2XML/YSmartLexer.py
+END
+__init__.py
+K 25
+svn:wc:ra_dav:version-url
+V 43
+/svn/!svn/ver/537/trunk/SQL2XML/__init__.py
+END
+sql2xml.py
+K 25
+svn:wc:ra_dav:version-url
+V 42
+/svn/!svn/ver/587/trunk/SQL2XML/sql2xml.py
+END
+YSmart.tokens
+K 25
+svn:wc:ra_dav:version-url
+V 45
+/svn/!svn/ver/537/trunk/SQL2XML/YSmart.tokens
+END

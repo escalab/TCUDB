@@ -1,0 +1,95 @@
+K 25
+svn:wc:ra_dav:version-url
+V 38
+/svn/!svn/ver/537/trunk/SQL2XML/antlr3
+END
+tokens.py
+K 25
+svn:wc:ra_dav:version-url
+V 48
+/svn/!svn/ver/537/trunk/SQL2XML/antlr3/tokens.py
+END
+extras.py
+K 25
+svn:wc:ra_dav:version-url
+V 48
+/svn/!svn/ver/537/trunk/SQL2XML/antlr3/extras.py
+END
+LICENSE.txt
+K 25
+svn:wc:ra_dav:version-url
+V 50
+/svn/!svn/ver/537/trunk/SQL2XML/antlr3/LICENSE.txt
+END
+constants.py
+K 25
+svn:wc:ra_dav:version-url
+V 51
+/svn/!svn/ver/537/trunk/SQL2XML/antlr3/constants.py
+END
+streams.py
+K 25
+svn:wc:ra_dav:version-url
+V 49
+/svn/!svn/ver/537/trunk/SQL2XML/antlr3/streams.py
+END
+treewizard.py
+K 25
+svn:wc:ra_dav:version-url
+V 52
+/svn/!svn/ver/537/trunk/SQL2XML/antlr3/treewizard.py
+END
+exceptions.py
+K 25
+svn:wc:ra_dav:version-url
+V 52
+/svn/!svn/ver/537/trunk/SQL2XML/antlr3/exceptions.py
+END
+compat.py
+K 25
+svn:wc:ra_dav:version-url
+V 48
+/svn/!svn/ver/537/trunk/SQL2XML/antlr3/compat.py
+END
+main.py
+K 25
+svn:wc:ra_dav:version-url
+V 46
+/svn/!svn/ver/537/trunk/SQL2XML/antlr3/main.py
+END
+debug.py
+K 25
+svn:wc:ra_dav:version-url
+V 47
+/svn/!svn/ver/537/trunk/SQL2XML/antlr3/debug.py
+END
+recognizers.py
+K 25
+svn:wc:ra_dav:version-url
+V 53
+/svn/!svn/ver/537/trunk/SQL2XML/antlr3/recognizers.py
+END
+dfa.py
+K 25
+svn:wc:ra_dav:version-url
+V 45
+/svn/!svn/ver/537/trunk/SQL2XML/antlr3/dfa.py
+END
+__init__.py
+K 25
+svn:wc:ra_dav:version-url
+V 50
+/svn/!svn/ver/537/trunk/SQL2XML/antlr3/__init__.py
+END
+tree.py
+K 25
+svn:wc:ra_dav:version-url
+V 46
+/svn/!svn/ver/537/trunk/SQL2XML/antlr3/tree.py
+END
+dottreegen.py
+K 25
+svn:wc:ra_dav:version-url
+V 52
+/svn/!svn/ver/537/trunk/SQL2XML/antlr3/dottreegen.py
+END

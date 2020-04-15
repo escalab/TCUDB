@@ -1,0 +1,89 @@
+K 25
+svn:wc:ra_dav:version-url
+V 37
+/svn/!svn/ver/469/trunk/test/ssb_test
+END
+q1_1.sql
+K 25
+svn:wc:ra_dav:version-url
+V 44
+/svn/!svn/ver/2/trunk/test/ssb_test/q1_1.sql
+END
+q1_2.sql
+K 25
+svn:wc:ra_dav:version-url
+V 46
+/svn/!svn/ver/468/trunk/test/ssb_test/q1_2.sql
+END
+q2_1.sql
+K 25
+svn:wc:ra_dav:version-url
+V 46
+/svn/!svn/ver/427/trunk/test/ssb_test/q2_1.sql
+END
+q1_3.sql
+K 25
+svn:wc:ra_dav:version-url
+V 44
+/svn/!svn/ver/2/trunk/test/ssb_test/q1_3.sql
+END
+q3_1.sql
+K 25
+svn:wc:ra_dav:version-url
+V 44
+/svn/!svn/ver/2/trunk/test/ssb_test/q3_1.sql
+END
+q2_2.sql
+K 25
+svn:wc:ra_dav:version-url
+V 46
+/svn/!svn/ver/427/trunk/test/ssb_test/q2_2.sql
+END
+q3_2.sql
+K 25
+svn:wc:ra_dav:version-url
+V 44
+/svn/!svn/ver/2/trunk/test/ssb_test/q3_2.sql
+END
+q2_3.sql
+K 25
+svn:wc:ra_dav:version-url
+V 46
+/svn/!svn/ver/427/trunk/test/ssb_test/q2_3.sql
+END
+q4_1.sql
+K 25
+svn:wc:ra_dav:version-url
+V 44
+/svn/!svn/ver/2/trunk/test/ssb_test/q4_1.sql
+END
+q3_3.sql
+K 25
+svn:wc:ra_dav:version-url
+V 44
+/svn/!svn/ver/2/trunk/test/ssb_test/q3_3.sql
+END
+q4_2.sql
+K 25
+svn:wc:ra_dav:version-url
+V 46
+/svn/!svn/ver/460/trunk/test/ssb_test/q4_2.sql
+END
+q4_3.sql
+K 25
+svn:wc:ra_dav:version-url
+V 46
+/svn/!svn/ver/469/trunk/test/ssb_test/q4_3.sql
+END
+q3_4.sql
+K 25
+svn:wc:ra_dav:version-url
+V 44
+/svn/!svn/ver/2/trunk/test/ssb_test/q3_4.sql
+END
+ssb.schema
+K 25
+svn:wc:ra_dav:version-url
+V 46
+/svn/!svn/ver/2/trunk/test/ssb_test/ssb.schema
+END

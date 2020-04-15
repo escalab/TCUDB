@@ -39,11 +39,11 @@ generate an executable file named `GPUDATABASE`
 
 `make gpudb`
 
-Run query
+Run query (e.g., datadir is where MATRICES0, MATRICES1... are located)
 
 `./GPUDATABASE --datadir dir`
 
-e.g., ./GPUDATABASE --datadir /home/yuching/workplace/gpudb/trunk/test/dbgen
+e.g., ./GPUDATABASE --datadir ./GPUDATABASE --datadir ../utility/
 
 ```
 # example output for ssb_test/q1_1.sql

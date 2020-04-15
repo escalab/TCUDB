@@ -16,8 +16,6 @@
 #include "../include/schema.h"
 #include "../include/cpuCudaLib.h"
 #include "../include/gpuCudaLib.h"
-#include "../include/cuPrintf.cu"
-#include "../include/cuPrintf.cuh"
 extern struct tableNode* tableScan(struct scanNode *,struct statistic *);
 extern struct tableNode* hashJoin(struct joinNode *, struct statistic *);
 extern struct tableNode* groupBy(struct groupByNode *,struct statistic *);
@@ -30,8 +28,6 @@ extern char* materializeCol(struct materializeNode * mn, struct statistic *);
 	}} while(0)
 int main(int argc, char ** argv){
 
-//        cudaPrintfInit();
-//        cudaPrintfDisplay(stdout, true);
 /* For initializing CUDA device */
 	int * cudaTmp;
 	cudaMalloc((void**)&cudaTmp,sizeof(int));
@@ -73,7 +69,8 @@ int main(int argc, char ** argv){
 	int blockTotal;
 	struct columnHeader header;
 
-	outFd = open("MATRICES3",O_RDONLY);
+	outFd = open("/home/yuching/workplace/gpudb/trunk/src/utility/MATRICES3",O_RDONLY);
+	//outFd = open("MATRICES3",O_RDONLY);
 	read(outFd, &header, sizeof(struct columnHeader));
 	blockTotal = header.blockTotal;
         printf("blockTotal is: %d\n", blockTotal);
@@ -175,7 +172,6 @@ int main(int argc, char ** argv){
 			int tmp = 1;
 			memcpy((matricesRel.filter)->exp[0].content, &tmp,sizeof(int));
 		}
-//                cuPrintf("whereCondition content: %s\n", (matricesRel.filter)->exp->content);
                 //printf("whereCondition content: %s\n", (matricesRel.filter)->exp->content);
 		struct tableNode * matricesRes = tableScan(&matricesRel, &pp);
 		if(blockTotal !=1){
@@ -208,6 +204,5 @@ int main(int argc, char ** argv){
 	printf("PCIe Time: %lf\n",pp.pcie);
 	printf("Kernel Time: %lf\n",pp.kernel);
 	printf("Total Time: %lf\n", timeE/(1000*1000));
-        cudaPrintfEnd();
 }
 

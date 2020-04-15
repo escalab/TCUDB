@@ -3,7 +3,6 @@ trunk/.tmp/*.xml
 trunk/SQL2XML/*.pyc
 trunk/src/utility/gpuDBLoader
 trunk/src/cuda/GPUDATABASE
-trunk/test/dbgen/*.tbl
 trunk/src/utility/LINEORDER*
 trunk/src/utility/PART*
 trunk/src/utility/SUPPLIER*

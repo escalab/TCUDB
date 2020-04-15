@@ -1,6 +1,6 @@
 # TCUDB
 
-### Generate data loader (build xml tree and *.tbl), enter `trunk` directory
+### Generate data loader (build xml tree), enter `trunk` directory
 `./translate.py test/ssb_test/ssb.schema`
 
 ### SSBM plain data generation
@@ -14,7 +14,7 @@ Create data with scale factor 1 GB
 `./dbgen -vfF -T a -s 1`
 
 ### Enter src/utility directory, load SSBM data
-generate "gpuDBLoader" to transform the original data
+generate "gpuDBLoader" to transform the original data (`gcc -o gpuDBLoader load.c`)
 
 `make loader` 
 load data 
@@ -22,7 +22,7 @@ load data
 `./gpuDBLoader --lineorder ../../test/dbgen/lineorder.tbl --ddate ../../test/dbgen/date.tbl --customer ../../test/dbgen/customer.tbl --supplier ../../test/dbgen/supplier.tbl --part ../../test/dbgen/part.tbl`
 
 
-### Code generation (cuda code and some c code, e.g., load.c, driver.cu)
+### Code generation (cuda code, e.g., driver.cu)
 `./translate.py test/ssb_test/q1_1.sql test/ssb_test/ssb.schema`
 ```
 --------------------------------------------------------------------

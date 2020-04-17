@@ -15,6 +15,8 @@ static void scanImpl(int *d_input, int rLen, int *d_output, struct statistic * p
 		cudaMemcpy(input, d_input, rLen*sizeof(int), cudaMemcpyDeviceToDevice);
 		preallocBlockSums(len);
 		prescanArray(output, input, len, pp);
+        //printf("len: %d\n", len);
+        //printf("if rLen: %d\n", rLen);
 		deallocBlockSums();
 		cudaMemcpy(d_output,output,rLen*sizeof(int),cudaMemcpyDeviceToDevice);
 		cudaFree(input);
@@ -22,6 +24,7 @@ static void scanImpl(int *d_input, int rLen, int *d_output, struct statistic * p
 		return;
 	}else{
 		preallocBlockSums(rLen);
+        //printf("esle rLen: %d\n", rLen);
 		prescanArray(d_output, d_input, rLen, pp);
 		deallocBlockSums();
 	}

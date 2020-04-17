@@ -69,11 +69,9 @@ int main(int argc, char ** argv){
 	int blockTotal;
 	struct columnHeader header;
 
-	outFd = open("/home/yuching/workplace/gpudb/trunk/src/utility/MATRICES3",O_RDONLY);
-	//outFd = open("MATRICES3",O_RDONLY);
+	outFd = open("MATRICES3",O_RDONLY);
 	read(outFd, &header, sizeof(struct columnHeader));
 	blockTotal = header.blockTotal;
-        printf("blockTotal is: %d\n", blockTotal);
 	close(outFd);
 	offset = 0;
 	long blockSize[2];
@@ -172,13 +170,11 @@ int main(int argc, char ** argv){
 			int tmp = 1;
 			memcpy((matricesRel.filter)->exp[0].content, &tmp,sizeof(int));
 		}
-                //printf("whereCondition content: %s\n", (matricesRel.filter)->exp->content);
 		struct tableNode * matricesRes = tableScan(&matricesRel, &pp);
 		if(blockTotal !=1){
 			mergeIntoTable(result,matricesRes,&pp);
 		}else{
 			clock_gettime(CLOCK_REALTIME,&diskStart);
-                        // print result to verify the correctness
 			freeTable(result);
 			result = matricesRes;
 			clock_gettime(CLOCK_REALTIME,&diskEnd);
@@ -191,8 +187,6 @@ int main(int argc, char ** argv){
 		diskTotal += (diskEnd.tv_sec -  diskStart.tv_sec)* BILLION + diskEnd.tv_nsec - diskStart.tv_nsec;
 	}
 
-        printf("====Result====\n");
-        printf("dataPos: %d\n", result->dataPos);
 	struct materializeNode mn;
 	mn.table = result;
 	materializeCol(&mn, &pp);

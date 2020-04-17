@@ -121,6 +121,7 @@ static void prescanArrayRecursive(int *outArray, const int *inArray, int numElem
     else
         numThreads = floorPow2(numElements);
 
+    //printf("numThreads: %d\n", numThreads);
     unsigned int numEltsPerBlock = numThreads * 2;
 
     unsigned int numEltsLastBlock = numElements - (numBlocks-1) * numEltsPerBlock;
@@ -191,6 +192,7 @@ static void prescanArrayRecursive(int *outArray, const int *inArray, int numElem
 
 static void prescanArray(int *outArray, int *inArray, int numElements, struct statistic *pp)
 {
+    //printf("scan.cu -- numElements: %d\n", numElements);
     prescanArrayRecursive(outArray, inArray, numElements, 0,pp);
 }
 

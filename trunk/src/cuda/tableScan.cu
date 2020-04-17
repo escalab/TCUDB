@@ -317,6 +317,7 @@ __global__ static void genScanFilter_init_int_eq(char *col, long tupleNum, int w
     for(long i = tid; i<tupleNum;i+=stride){
         con = ((int*)col)[i] == where; 
         filter[i] = con;
+        //printf("genScanFilter con: %d\t%d\t%d\n", con, ((int*)col)[i], where);
     }
 }
 __global__ static void genScanFilter_init_float_eq(char *col, long tupleNum, float where, int * filter){
@@ -750,7 +751,7 @@ __global__ static void countScanNum(int *filter, long tupleNum, int * count){
     }
 
     count[tid] = localCount;
-
+    // printf("localCount: %d\n", localCount); // 256
 }
 
 /*
@@ -892,6 +893,7 @@ struct tableNode * tableScan(struct scanNode *sn, struct statistic *pp){
     dim3 block(256);
 
     long totalTupleNum = sn->tn->tupleNum;
+    //printf("totalTupleNum: %ld\n", totalTupleNum); // %
     int blockNum = totalTupleNum / block.x + 1;
 
     if(blockNum<2048)
@@ -909,9 +911,11 @@ struct tableNode * tableScan(struct scanNode *sn, struct statistic *pp){
     int * colWherePos = (int *)malloc(sn->outputNum * sizeof(int));
     CHECK_POINTER(colWherePos);
 
+    //printf("sn->outputNum: %d\n", sn->outputNum);
     for(int i=0;i<sn->outputNum;i++)
         colWherePos[i] = -1;
 
+    //printf("attrNum: %d\n", attrNum);
     for(int i=0;i<attrNum;i++){
         whereFree[i] = 1;
         for(int j=0;j<sn->outputNum;j++){
@@ -1252,11 +1256,19 @@ struct tableNode * tableScan(struct scanNode *sn, struct statistic *pp){
     scanImpl(gpuCount,threadNum,gpuPsum, pp);
 
     int tmp1, tmp2;
-
+    //count = 0;
+    //printf("for loop -- threadNum: %d\n", threadNum);
+    //for (int i=1; i <= threadNum; i++) {
+    //CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(&tmp1, &gpuCount[i-1], sizeof(int), cudaMemcpyDeviceToHost));
+    //CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(&tmp2, &gpuPsum[i-1], sizeof(int), cudaMemcpyDeviceToHost));
     CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(&tmp1, &gpuCount[threadNum-1], sizeof(int), cudaMemcpyDeviceToHost));
     CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(&tmp2, &gpuPsum[threadNum-1], sizeof(int), cudaMemcpyDeviceToHost));
+    //printf("tmp1: %d\n", tmp1); // 0
+    //printf("tmp2: %d\n", tmp2); // 1
 
     count = tmp1+tmp2;
+    //count = 6;
+    //}
     res->tupleNum = count;
     printf("[INFO]Number of selection results: %d\n",count);
 
@@ -1361,12 +1373,14 @@ struct tableNode * tableScan(struct scanNode *sn, struct statistic *pp){
         if(sn->keepInGpu == 1){
             res->dataPos[i] = GPU;
             res->content[i] = result[i];
+            //printf("result content: %s\n", result[i]); // will incur seg fault
         }else{
             res->dataPos[i] = MEM;
             res->content[i] = (char *)malloc(colSize);
             CHECK_POINTER(res->content[i]);
             memset(res->content[i],0,colSize);
             CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(res->content[i],result[i],colSize ,cudaMemcpyDeviceToHost));
+            //printf("result content: %s\n", result[i]);
             CUDA_SAFE_CALL(cudaFree(result[i]));
         }
     }

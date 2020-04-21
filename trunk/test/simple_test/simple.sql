@@ -7,6 +7,6 @@ and lo_discount<=3
 and lo_quantity<25;
 */
 select
-  val
-from  matrices
-where matrix_id=1;
+  mat1.i
+from  (select * from matrices where matrix_id = 1) as mat1
+;

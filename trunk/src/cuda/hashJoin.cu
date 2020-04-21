@@ -201,6 +201,7 @@ __global__ static void count_join_result(int* num, int* psum, char* bucket, char
             int pSum = psum[hkey];
             int dimKey = ((int *)(bucket))[2*j + 2*pSum];
             if( dimKey == fkey){
+                //printf("dimKey: %d\t fkey: %d\n", dimKey, fkey);
                 int dimId = ((int *)(bucket))[2*j + 2*pSum + 1];
                 lcount ++;
                 fvalue = dimId;
@@ -209,7 +210,7 @@ __global__ static void count_join_result(int* num, int* psum, char* bucket, char
         }
         factFilter[i] = fvalue;
     }
-
+    //printf("TEST!!!\n"); // 256 times
     count[offset] = lcount;
 }
 
@@ -339,6 +340,7 @@ __global__ void static joinFact_other(int *resPsum, char * fact,  int attrSize, 
     }
 }
 
+// TODO:DEBUG
 __global__ void static joinFact_int(int *resPsum, char * fact,  int attrSize, long  num, int * filter, char * result){
 
     int startIndex = blockIdx.x*blockDim.x + threadIdx.x;
@@ -348,6 +350,7 @@ __global__ void static joinFact_int(int *resPsum, char * fact,  int attrSize, lo
     for(long i=startIndex;i<num;i+=stride){
         if(filter[i] != 0){
             ((int*)result)[localCount] = ((int *)fact)[i];
+            printf(" ===> joinFact_int: %s\n", result); // empty
             localCount ++;
         }
     }
@@ -584,6 +587,7 @@ struct tableNode * hashJoin(struct joinNode *jNode, struct statistic *pp){
         CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(gpu_fact,jNode->leftTable->content[jNode->leftKeyIndex], foreignKeySize,cudaMemcpyHostToDevice));
 
     }else if (dataPos == GPU || dataPos == UVA){
+        //printf("=== data in GPU ===\n");
         gpu_fact = jNode->leftTable->content[jNode->leftKeyIndex];
     }
 
@@ -648,7 +652,9 @@ struct tableNode * hashJoin(struct joinNode *jNode, struct statistic *pp){
 
     CUDA_SAFE_CALL_NO_SYNC(cudaFree(gpu_bucket));
 
+    //printf("res->totalAttr: %d\n", res->totalAttr); // 2
     for(int i=0; i<res->totalAttr; i++){
+
         int index, pos;
         long colSize = 0, resSize = 0;
         int leftRight = 0;
@@ -711,11 +717,13 @@ struct tableNode * hashJoin(struct joinNode *jNode, struct statistic *pp){
 
         if(leftRight == 0){
             if(format == UNCOMPRESSED){
+                //printf("=== format is uncompressed ===\n");
 
                 if(dataPos == MEM || dataPos == MMAP || dataPos == PINNED){
                     CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void **)&gpu_fact, colSize));
                     CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(gpu_fact, table, colSize,cudaMemcpyHostToDevice));
                 }else{
+                    //printf("=== assign table to gpu_fact  ===\n");
                     gpu_fact = table;
                 }
 
@@ -829,11 +837,19 @@ struct tableNode * hashJoin(struct joinNode *jNode, struct statistic *pp){
         if(res->dataPos[i] == MEM){
             res->content[i] = (char *) malloc(resSize);
             memset(res->content[i],0,resSize);
+            // copy result back to host
             CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(res->content[i],gpu_result,resSize,cudaMemcpyDeviceToHost));
+            printf("result copied back to host: %s\n", res->content[i]); // didn't come here
             CUDA_SAFE_CALL_NO_SYNC(cudaFree(gpu_result));
 
         }else if(res->dataPos[i] == GPU){
+            //printf("res->dataPos[i] == GPU\n"); // come thru here
             res->content[i] = gpu_result;
+            //printf("res->content[i]: %s\n", res->content[i]); // need to use cudaMemcpyDtoH
+            char * tmp = (char *)malloc(resSize);
+            memset(tmp, 0, resSize);
+            CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(tmp,gpu_result,resSize,cudaMemcpyDeviceToHost));
+            printf("res->content[i]: %s\n", tmp); // empty
         }
         if(dataPos == MEM || dataPos == MMAP || dataPos == PINNED)
             CUDA_SAFE_CALL_NO_SYNC(cudaFree(gpu_fact));

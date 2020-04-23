@@ -23,6 +23,8 @@
 #include "../include/gpuCudaLib.h"
 #include "../include/cudaHash.h"
 #include "scanImpl.cu"
+#include "../include/cuPrintf.cu"
+#include "../include/cuPrintf.cuh"
 
 /*
  * Combine the group by columns to build the group by keys. 
@@ -100,7 +102,10 @@ __device__ static float calMathExp(char **content, struct mathExp exp, int pos){
         res = calMathExp(content, ((struct mathExp*)exp.exp)[0],pos) - calMathExp(content, ((struct mathExp*)exp.exp)[1], pos);
 
     }else if (exp.op == MULTIPLY){
+        cuPrintf("num1: %f\tnum2: %f\n", calMathExp(content, ((struct mathExp*)exp.exp)[0],pos), calMathExp(content, ((struct mathExp*)exp.exp)[1],pos));
         res = calMathExp(content, ((struct mathExp*)exp.exp)[0],pos) * calMathExp(content, ((struct mathExp*)exp.exp)[1], pos);
+        //cuPrintf("num1 * num2 = %f\n", calMathExp(content, ((struct mathExp*)exp.exp)[0],pos) * calMathExp(content, ((struct mathExp*)exp.exp)[1],pos));
+        cuPrintf("MULTIPLY res: %.6f\n", res);
 
     }else if (exp.op == DIVIDE){
         res = calMathExp(content, ((struct mathExp*)exp.exp)[0],pos) / calMathExp(content, ((struct mathExp*)exp.exp)[1], pos);
@@ -118,6 +123,7 @@ __global__ static void agg_cal_cons(char ** content, int colNum, struct groupByE
     int stride = blockDim.x * gridDim.x;
     int index = blockIdx.x * blockDim.x + threadIdx.x;
     float buf[32];
+
     for(int i=0;i<32;i++)
         buf[i] = 0;
 
@@ -197,6 +203,8 @@ __global__ static void agg_cal(char ** content, int colNum, struct groupByExp* e
  */
 
 struct tableNode * groupBy(struct groupByNode * gb, struct statistic * pp){
+
+    cudaPrintfInit();
 
     struct timespec start,end;
     clock_gettime(CLOCK_REALTIME,&start);
@@ -378,6 +386,9 @@ struct tableNode * groupBy(struct groupByNode * gb, struct statistic * pp){
     clock_gettime(CLOCK_REALTIME,&end);
     double timeE = (end.tv_sec -  start.tv_sec)* BILLION + end.tv_nsec - start.tv_nsec;
     printf("GroupBy Time: %lf\n", timeE/(1000*1000));
+
+    cudaPrintfDisplay(stdout, true);
+    cudaPrintfEnd();
 
     return res;
 }

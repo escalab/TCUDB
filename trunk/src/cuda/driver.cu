@@ -114,6 +114,7 @@ int main(int argc, char ** argv){
 
 		mat2Table->content[0] = (char *)memalign(256,outSize);
 		memcpy(mat2Table->content[0],outTable,outSize);
+        printf("mat2 content[0]: %f\n", outTable);
 		munmap(outTable,outSize);
 		clock_gettime(CLOCK_REALTIME,&diskEnd);
 		diskTotal += (diskEnd.tv_sec -  diskStart.tv_sec)* BILLION + diskEnd.tv_nsec - diskStart.tv_nsec;
@@ -135,6 +136,7 @@ int main(int argc, char ** argv){
 
 		mat2Table->content[1] = (char *)memalign(256,outSize);
 		memcpy(mat2Table->content[1],outTable,outSize);
+        printf("mat2 content[1]: %f\n", outTable);
 		munmap(outTable,outSize);
 		clock_gettime(CLOCK_REALTIME,&diskEnd);
 		diskTotal += (diskEnd.tv_sec -  diskStart.tv_sec)* BILLION + diskEnd.tv_nsec - diskStart.tv_nsec;
@@ -156,6 +158,7 @@ int main(int argc, char ** argv){
 
 		mat2Table->content[2] = (char *)memalign(256,outSize);
 		memcpy(mat2Table->content[2],outTable,outSize);
+        printf("mat2 content[2]: %f\n", outTable);
 		munmap(outTable,outSize);
 		clock_gettime(CLOCK_REALTIME,&diskEnd);
 		diskTotal += (diskEnd.tv_sec -  diskStart.tv_sec)* BILLION + diskEnd.tv_nsec - diskStart.tv_nsec;
@@ -163,45 +166,16 @@ int main(int argc, char ** argv){
 		mat2Table->tupleSize = 0 + sizeof(int) + sizeof(int) + sizeof(int) + sizeof(int);
 
 		mat2Table->tupleNum = header.tupleNum;
-		struct scanNode mat2Rel;
-		mat2Rel.tn = mat2Table;
-		mat2Rel.hasWhere = 1;
-		mat2Rel.whereAttrNum = 1;
-		mat2Rel.whereIndex = (int *)malloc(sizeof(int)*1);
-		CHECK_POINTER(mat2Rel.whereIndex);
-		mat2Rel.outputNum = 3;
-		mat2Rel.outputIndex = (int *)malloc(sizeof(int) * 3);
-		CHECK_POINTER(mat2Rel.outputIndex);
-		mat2Rel.outputIndex[0] = 0;
-		mat2Rel.outputIndex[1] = 1;
-		mat2Rel.outputIndex[2] = 2;
-		mat2Rel.whereIndex[0] = 2;
-		mat2Rel.keepInGpu = 1;
-		mat2Rel.filter = (struct whereCondition *)malloc(sizeof(struct whereCondition));
-		CHECK_POINTER(mat2Rel.filter);
-		(mat2Rel.filter)->nested = 0;
-		(mat2Rel.filter)->expNum = 1;
-		(mat2Rel.filter)->exp = (struct whereExp*) malloc(sizeof(struct whereExp) *1);
-		CHECK_POINTER((mat2Rel.filter)->exp);
-		(mat2Rel.filter)->andOr = EXP;
-		(mat2Rel.filter)->exp[0].index = 0;
-		(mat2Rel.filter)->exp[0].relation = EQ;
-		{
-			int tmp = 0;
-			memcpy((mat2Rel.filter)->exp[0].content, &tmp,sizeof(int));
-		}
-		struct tableNode *tmp = tableScan(&mat2Rel, &pp);
-		if(blockTotal !=1){
-			mergeIntoTable(mat2Res,tmp,&pp);
+		if(blockTotal != 1){
+			mergeIntoTable(mat2Res,mat2Table,&pp);
+			clock_gettime(CLOCK_REALTIME,&diskStart);
+			freeTable(mat2Table);
+			clock_gettime(CLOCK_REALTIME,&diskEnd);
+			diskTotal += (diskEnd.tv_sec -  diskStart.tv_sec)* BILLION + diskEnd.tv_nsec - diskStart.tv_nsec;
 		}else{
 			free(mat2Res);
-			mat2Res = tmp;
+			mat2Res = mat2Table;
 		}
-		clock_gettime(CLOCK_REALTIME,&diskStart);
-		freeScan(&mat2Rel);
-
-		clock_gettime(CLOCK_REALTIME,&diskEnd);
-		diskTotal += (diskEnd.tv_sec -  diskStart.tv_sec)* BILLION + diskEnd.tv_nsec - diskStart.tv_nsec;
 		tupleOffset += header.tupleNum;
 
 	}
@@ -251,6 +225,7 @@ int main(int argc, char ** argv){
 
 		CHECK_POINTER(mat1Table->content[0]);
 		memcpy(mat1Table->content[0],outTable,outSize);
+        printf("mat1 content[0]: %f\n", outTable);
 		munmap(outTable,outSize);
 		clock_gettime(CLOCK_REALTIME,&diskEnd);
 		diskTotal += (diskEnd.tv_sec -  diskStart.tv_sec)* BILLION + diskEnd.tv_nsec - diskStart.tv_nsec;
@@ -274,6 +249,7 @@ int main(int argc, char ** argv){
 
 		CHECK_POINTER(mat1Table->content[1]);
 		memcpy(mat1Table->content[1],outTable,outSize);
+        printf("mat1 content[1]: %f\n", outTable);
 		munmap(outTable,outSize);
 		clock_gettime(CLOCK_REALTIME,&diskEnd);
 		diskTotal += (diskEnd.tv_sec -  diskStart.tv_sec)* BILLION + diskEnd.tv_nsec - diskStart.tv_nsec;
@@ -297,6 +273,7 @@ int main(int argc, char ** argv){
 
 		CHECK_POINTER(mat1Table->content[2]);
 		memcpy(mat1Table->content[2],outTable,outSize);
+        printf("mat1 content[2]: %f\n", outTable);
 		munmap(outTable,outSize);
 		clock_gettime(CLOCK_REALTIME,&diskEnd);
 		diskTotal += (diskEnd.tv_sec -  diskStart.tv_sec)* BILLION + diskEnd.tv_nsec - diskStart.tv_nsec;
@@ -305,70 +282,46 @@ int main(int argc, char ** argv){
 		mat1Table->tupleSize = 0 + sizeof(int) + sizeof(int) + sizeof(int);
 
 		mat1Table->tupleNum = header.tupleNum;
-		struct scanNode mat1Rel;
-		mat1Rel.tn = mat1Table;
-		mat1Rel.hasWhere = 1;
-		mat1Rel.whereAttrNum = 1;
-		mat1Rel.outputNum = 3;
-		mat1Rel.whereIndex = (int *)malloc(sizeof(int)*1);
-		CHECK_POINTER(mat1Rel.whereIndex);
-		mat1Rel.outputIndex = (int *)malloc(sizeof(int)*3);
-		CHECK_POINTER(mat1Rel.outputIndex);
-		mat1Rel.whereIndex[0] = 2;
-		mat1Rel.outputIndex[0 ] = 0;
-		mat1Rel.outputIndex[1 ] = 1;
-		mat1Rel.outputIndex[2 ] = 2;
-		mat1Rel.keepInGpu = 1;
-		mat1Rel.filter = (struct whereCondition *)malloc(sizeof(struct whereCondition));
-		CHECK_POINTER(mat1Rel.filter);
-		(mat1Rel.filter)->nested = 0;
-		(mat1Rel.filter)->expNum = 1;
-		(mat1Rel.filter)->exp = (struct whereExp*) malloc(sizeof(struct whereExp) *1);
-		CHECK_POINTER((mat1Rel.filter)->exp);
-		(mat1Rel.filter)->andOr = EXP;
-		(mat1Rel.filter)->exp[0].index = 0;
-		(mat1Rel.filter)->exp[0].relation = EQ;
-		{
-			int tmp = 0;
-			memcpy((mat1Rel.filter)->exp[0].content, &tmp,sizeof(int));
-		}
-		struct tableNode * mat1Res = tableScan(&mat1Rel, &pp);
-		clock_gettime(CLOCK_REALTIME,&diskStart);
-		freeScan(&mat1Rel);
-
-		clock_gettime(CLOCK_REALTIME,&diskEnd);
-		diskTotal += (diskEnd.tv_sec -  diskStart.tv_sec)* BILLION + diskEnd.tv_nsec - diskStart.tv_nsec;
+		struct tableNode * mat1Res = mat1Table;
 		struct joinNode jNode0;
 		jNode0.leftTable = mat1Res;
 		jNode0.rightTable = mat2Res;
-		jNode0.totalAttr = 2;
-		jNode0.keepInGpu = (int *) malloc(sizeof(int) * 2);
+		jNode0.totalAttr = 4;
+		jNode0.keepInGpu = (int *) malloc(sizeof(int) * 4);
 		CHECK_POINTER(jNode0.keepInGpu);
-		for(int k=0;k<2;k++)
+		for(int k=0;k<4;k++)
 			jNode0.keepInGpu[k] = 1;
-		jNode0.rightOutputAttrNum = 1;
-		jNode0.leftOutputAttrNum = 1;
-		jNode0.leftOutputAttrType = (int *)malloc(sizeof(int)*1);
+		jNode0.rightOutputAttrNum = 2;
+		jNode0.leftOutputAttrNum = 2;
+		jNode0.leftOutputAttrType = (int *)malloc(sizeof(int)*2);
 		CHECK_POINTER(jNode0.leftOutputAttrType);
-		jNode0.leftOutputIndex = (int *)malloc(sizeof(int)*1);
+		jNode0.leftOutputIndex = (int *)malloc(sizeof(int)*2);
 		CHECK_POINTER(jNode0.leftOutputIndex);
-		jNode0.leftPos = (int *)malloc(sizeof(int)*1);
+		jNode0.leftPos = (int *)malloc(sizeof(int)*2);
 		CHECK_POINTER(jNode0.leftPos);
 		jNode0.tupleSize = 0;
 		jNode0.leftOutputIndex[0] = 0;
 		jNode0.leftOutputAttrType[0] = INT;
 		jNode0.leftPos[0] = 0;
 		jNode0.tupleSize += mat1Res->attrSize[0];
-		jNode0.rightOutputAttrType = (int *)malloc(sizeof(int)*1);
+		jNode0.leftOutputIndex[1] = 1;
+		jNode0.leftOutputAttrType[1] = INT;
+		jNode0.leftPos[1] = 2;
+		jNode0.tupleSize += mat1Res->attrSize[1];
+		jNode0.rightOutputAttrType = (int *)malloc(sizeof(int)*2);
 		CHECK_POINTER(jNode0.rightOutputAttrType);
-		jNode0.rightOutputIndex = (int *)malloc(sizeof(int)*1);
+		jNode0.rightOutputIndex = (int *)malloc(sizeof(int)*2);
 		CHECK_POINTER(jNode0.rightOutputIndex);
-		jNode0.rightPos = (int *)malloc(sizeof(int)*1);
+		jNode0.rightPos = (int *)malloc(sizeof(int)*2);
 		CHECK_POINTER(jNode0.rightPos);
 		jNode0.rightOutputIndex[0] = 0;
 		jNode0.rightOutputAttrType[0] = INT;
 		jNode0.rightPos[0] = 1;
 		jNode0.tupleSize += mat2Res->attrSize[0];
+		jNode0.rightOutputIndex[1] = 1;
+		jNode0.rightOutputAttrType[1] = INT;
+		jNode0.rightPos[1] = 3;
+		jNode0.tupleSize += mat2Res->attrSize[1];
 		jNode0.rightKeyIndex = 2;
 		jNode0.leftKeyIndex = 2;
 		struct tableNode *join0 = hashJoin(&jNode0,&pp);
@@ -388,10 +341,72 @@ int main(int argc, char ** argv){
 		}
 	}
 
+	struct groupByNode * gbNode = (struct groupByNode *) malloc(sizeof(struct groupByNode));
+	CHECK_POINTER(gbNode);
+	gbNode->table = result;
+	gbNode->groupByColNum = 2;
+	gbNode->groupByIndex = (int *)malloc(sizeof(int) * 2);
+	CHECK_POINTER(gbNode->groupByIndex);
+	gbNode->groupByType = (int *)malloc(sizeof(int) * 2);
+	CHECK_POINTER(gbNode->groupByType);
+	gbNode->groupBySize = (int *)malloc(sizeof(int) * 2);
+	CHECK_POINTER(gbNode->groupBySize);
+	gbNode->groupByIndex[0] = 0;
+	gbNode->groupByType[0] = gbNode->table->attrType[0];
+	gbNode->groupBySize[0] = gbNode->table->attrSize[0];
+	gbNode->groupByIndex[1] = 1;
+	gbNode->groupByType[1] = gbNode->table->attrType[1];
+	gbNode->groupBySize[1] = gbNode->table->attrSize[1];
+	gbNode->outputAttrNum = 3;
+	gbNode->attrType = (int *) malloc(sizeof(int) *3);
+	CHECK_POINTER(gbNode->attrType);
+	gbNode->attrSize = (int *) malloc(sizeof(int) *3);
+	CHECK_POINTER(gbNode->attrSize);
+	gbNode->tupleSize = 0;
+	gbNode->gbExp = (struct groupByExp *) malloc(sizeof(struct groupByExp) * 3);
+	CHECK_POINTER(gbNode->gbExp);
+	gbNode->attrType[0] = result->attrType[0];
+	gbNode->attrSize[0] = result->attrSize[0];
+	gbNode->tupleSize += result->attrSize[0];
+	gbNode->gbExp[0].func = NOOP;
+	gbNode->gbExp[0].exp.op = NOOP;
+	gbNode->gbExp[0].exp.exp = NULL;
+	gbNode->gbExp[0].exp.opNum = 1;
+	gbNode->gbExp[0].exp.opType = COLUMN;
+	gbNode->gbExp[0].exp.opValue = 0;
+	gbNode->attrType[1] = result->attrType[1];
+	gbNode->attrSize[1] = result->attrSize[1];
+	gbNode->tupleSize += result->attrSize[1];
+	gbNode->gbExp[1].func = NOOP;
+	gbNode->gbExp[1].exp.op = NOOP;
+	gbNode->gbExp[1].exp.exp = NULL;
+	gbNode->gbExp[1].exp.opNum = 1;
+	gbNode->gbExp[1].exp.opType = COLUMN;
+	gbNode->gbExp[1].exp.opValue = 1;
+	gbNode->tupleSize += sizeof(float);
+	gbNode->attrType[2] = FLOAT;
+	gbNode->attrSize[2] = sizeof(float);
+	gbNode->gbExp[2].func = SUM;
+	gbNode->gbExp[2].exp.op = MULTIPLY;
+	gbNode->gbExp[2].exp.opNum = 2;
+	gbNode->gbExp[2].exp.exp = (long) malloc(sizeof(struct mathExp) * 2);
+((struct mathExp *)	gbNode->gbExp[2].exp.exp)[0].op = NOOP;
+((struct mathExp *)	gbNode->gbExp[2].exp.exp)[0].opNum = 1;
+((struct mathExp *)	gbNode->gbExp[2].exp.exp)[0].exp = 0;
+((struct mathExp *)	gbNode->gbExp[2].exp.exp)[0].opType = COLUMN;
+((struct mathExp *)	gbNode->gbExp[2].exp.exp)[0].opValue = 2;
+((struct mathExp *)	gbNode->gbExp[2].exp.exp)[1].op = NOOP;
+((struct mathExp *)	gbNode->gbExp[2].exp.exp)[1].opNum = 1;
+((struct mathExp *)	gbNode->gbExp[2].exp.exp)[1].exp = 0;
+((struct mathExp *)	gbNode->gbExp[2].exp.exp)[1].opType = COLUMN;
+((struct mathExp *)	gbNode->gbExp[2].exp.exp)[1].opValue = 3;
+	struct tableNode * gbResult = groupBy(gbNode, &pp);
+	freeGroupByNode(gbNode);
+
 	struct materializeNode mn;
-	mn.table = result;
+	mn.table = gbResult;
 	materializeCol(&mn, &pp);
-	freeTable(result);
+	freeTable(gbResult);
 
 	clock_gettime(CLOCK_REALTIME,&end);
 	double timeE = (end.tv_sec -  start.tv_sec)* BILLION + end.tv_nsec - start.tv_nsec;

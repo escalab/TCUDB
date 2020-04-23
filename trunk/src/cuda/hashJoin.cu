@@ -201,7 +201,6 @@ __global__ static void count_join_result(int* num, int* psum, char* bucket, char
             int pSum = psum[hkey];
             int dimKey = ((int *)(bucket))[2*j + 2*pSum];
             if( dimKey == fkey){
-                //printf("dimKey: %d\t fkey: %d\n", dimKey, fkey);
                 int dimId = ((int *)(bucket))[2*j + 2*pSum + 1];
                 lcount ++;
                 fvalue = dimId;
@@ -349,8 +348,9 @@ __global__ void static joinFact_int(int *resPsum, char * fact,  int attrSize, lo
 
     for(long i=startIndex;i<num;i+=stride){
         if(filter[i] != 0){
+            //printf(" ===> result: %s\n", result[i]); // null
             ((int*)result)[localCount] = ((int *)fact)[i];
-            printf(" ===> joinFact_int: %s\n", result); // empty
+            //printf(" ===> joinFact_int: %d\n", ((int *)fact)[i]); // 1
             localCount ++;
         }
     }
@@ -834,12 +834,13 @@ struct tableNode * hashJoin(struct joinNode *jNode, struct statistic *pp){
         
         res->attrTotalSize[i] = resSize;
         res->dataFormat[i] = UNCOMPRESSED;
+        // printf("resSize: %d\n", resSize); // 4
         if(res->dataPos[i] == MEM){
             res->content[i] = (char *) malloc(resSize);
             memset(res->content[i],0,resSize);
             // copy result back to host
             CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(res->content[i],gpu_result,resSize,cudaMemcpyDeviceToHost));
-            printf("result copied back to host: %s\n", res->content[i]); // didn't come here
+            //printf("result copied back to host: %s\n", res->content[i]); // didn't come here
             CUDA_SAFE_CALL_NO_SYNC(cudaFree(gpu_result));
 
         }else if(res->dataPos[i] == GPU){
@@ -849,7 +850,7 @@ struct tableNode * hashJoin(struct joinNode *jNode, struct statistic *pp){
             char * tmp = (char *)malloc(resSize);
             memset(tmp, 0, resSize);
             CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(tmp,gpu_result,resSize,cudaMemcpyDeviceToHost));
-            printf("res->content[i]: %s\n", tmp); // empty
+            //printf("res->content[i]: %s\n", tmp); // empty
         }
         if(dataPos == MEM || dataPos == MMAP || dataPos == PINNED)
             CUDA_SAFE_CALL_NO_SYNC(cudaFree(gpu_fact));

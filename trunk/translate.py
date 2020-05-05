@@ -80,7 +80,8 @@ def main():
 
     print 'Done'
     print '--------------------------------------------------------------------'
-    subprocess.check_call(['rm', '-rf', './' + TEMP_DIR])
+    #TODO: keep XML for debugging
+    #subprocess.check_call(['rm', '-rf', './' + TEMP_DIR])
 
 
     

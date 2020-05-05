@@ -114,7 +114,6 @@ int main(int argc, char ** argv){
 
 		mat2Table->content[0] = (char *)memalign(256,outSize);
 		memcpy(mat2Table->content[0],outTable,outSize);
-        printf("mat2 content[0]: %f\n", outTable);
 		munmap(outTable,outSize);
 		clock_gettime(CLOCK_REALTIME,&diskEnd);
 		diskTotal += (diskEnd.tv_sec -  diskStart.tv_sec)* BILLION + diskEnd.tv_nsec - diskStart.tv_nsec;
@@ -136,7 +135,6 @@ int main(int argc, char ** argv){
 
 		mat2Table->content[1] = (char *)memalign(256,outSize);
 		memcpy(mat2Table->content[1],outTable,outSize);
-        printf("mat2 content[1]: %f\n", outTable);
 		munmap(outTable,outSize);
 		clock_gettime(CLOCK_REALTIME,&diskEnd);
 		diskTotal += (diskEnd.tv_sec -  diskStart.tv_sec)* BILLION + diskEnd.tv_nsec - diskStart.tv_nsec;
@@ -158,7 +156,6 @@ int main(int argc, char ** argv){
 
 		mat2Table->content[2] = (char *)memalign(256,outSize);
 		memcpy(mat2Table->content[2],outTable,outSize);
-        printf("mat2 content[2]: %f\n", outTable);
 		munmap(outTable,outSize);
 		clock_gettime(CLOCK_REALTIME,&diskEnd);
 		diskTotal += (diskEnd.tv_sec -  diskStart.tv_sec)* BILLION + diskEnd.tv_nsec - diskStart.tv_nsec;
@@ -225,7 +222,6 @@ int main(int argc, char ** argv){
 
 		CHECK_POINTER(mat1Table->content[0]);
 		memcpy(mat1Table->content[0],outTable,outSize);
-        printf("mat1 content[0]: %f\n", outTable);
 		munmap(outTable,outSize);
 		clock_gettime(CLOCK_REALTIME,&diskEnd);
 		diskTotal += (diskEnd.tv_sec -  diskStart.tv_sec)* BILLION + diskEnd.tv_nsec - diskStart.tv_nsec;
@@ -249,7 +245,6 @@ int main(int argc, char ** argv){
 
 		CHECK_POINTER(mat1Table->content[1]);
 		memcpy(mat1Table->content[1],outTable,outSize);
-        printf("mat1 content[1]: %f\n", outTable);
 		munmap(outTable,outSize);
 		clock_gettime(CLOCK_REALTIME,&diskEnd);
 		diskTotal += (diskEnd.tv_sec -  diskStart.tv_sec)* BILLION + diskEnd.tv_nsec - diskStart.tv_nsec;
@@ -273,7 +268,6 @@ int main(int argc, char ** argv){
 
 		CHECK_POINTER(mat1Table->content[2]);
 		memcpy(mat1Table->content[2],outTable,outSize);
-        printf("mat1 content[2]: %f\n", outTable);
 		munmap(outTable,outSize);
 		clock_gettime(CLOCK_REALTIME,&diskEnd);
 		diskTotal += (diskEnd.tv_sec -  diskStart.tv_sec)* BILLION + diskEnd.tv_nsec - diskStart.tv_nsec;

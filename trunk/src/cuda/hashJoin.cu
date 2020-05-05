@@ -37,10 +37,13 @@
 __global__ static void count_hash_num(char *dim, long  inNum,int *num,int hsize){
     int stride = blockDim.x * gridDim.x;
     int offset = blockIdx.x * blockDim.x + threadIdx.x;
+    //printf("count_hash_num, inNum: %d\thsize: %d\n", inNum, hsize); // 5, 0
 
     for(int i=offset;i<inNum;i+=stride){
-        int joinKey = ((int *)dim)[i];
+        int joinKey = ((int *)dim)[i]; // 0 1 1 2 2 -- mat2.i
+        //printf("joinKey: %d\n", ((int *)dim)[i]);
         int hKey = joinKey & (hsize-1);
+        //printf("hKey: %d\n", hKey);
         atomicAdd(&(num[hKey]),1);
     }
 }
@@ -62,6 +65,7 @@ __global__ static void build_hash_table(char *dim, long inNum, int *psum, char *
     for(int i=offset;i<inNum;i+=stride){
         int joinKey = ((int *) dim)[i]; 
         int hKey = joinKey & (hsize-1);
+        //printf("hKey: %d\n", hKey); // 0 1 1 2 2
         int pos = atomicAdd(&psum[hKey],1) * 2;
         ((int*)bucket)[pos] = joinKey;
         pos += 1;
@@ -182,35 +186,83 @@ __global__ static void count_join_result_rle(int* num, int* psum, char* bucket, 
 
 }
 
-/*
- * Count join result for uncompressed column
+/* support multiple matched tuple using 2D array to store them 
+TODO: make 2D array, e.g., int** 2DfactFilter, max Size: i_dim*j_dim
  */
-
-__global__ static void count_join_result(int* num, int* psum, char* bucket, char* fact, long inNum, int* count, int * factFilter,int hsize){
+/*
+__global__ static void count_join_result(int* num, int* psum, char* bucket, char* fact, long inNum, int* count, int ** 2DfactFilter,int hsize) {
     int lcount = 0;
     int stride = blockDim.x * gridDim.x;
     long offset = blockIdx.x*blockDim.x + threadIdx.x;
 
-    for(int i=offset;i<inNum;i+=stride){
+    for (int i = offset; i < inNum; i += stride) {
         int fkey = ((int *)(fact))[i];
         int hkey = fkey &(hsize-1);
         int keyNum = num[hkey];
         int fvalue = 0;
 
-        for(int j=0;j<keyNum;j++){
+        for (int j = 0; j < keyNum; j++) {
             int pSum = psum[hkey];
             int dimKey = ((int *)(bucket))[2*j + 2*pSum];
+
+            if (dimKey == fkey) { // matched tuple
+
+
+            }
+        }
+
+    }
+
+}
+*/
+
+/*
+ * Count join result for uncompressed column
+ */
+__global__ static void count_join_result(int* num, int* psum, char* bucket, char* fact, long inNum, int* count, int * factFilter,int hsize){
+    int lcount = 0;
+    int stride = blockDim.x * gridDim.x;
+    long offset = blockIdx.x*blockDim.x + threadIdx.x;
+
+    //printf("hsize: %d\n", hsize); // orig:5, after NP2(hsize) -> 8
+    for(int i=offset;i<inNum;i+=stride){ // inNum = 6
+        int fkey = ((int *)(fact))[i];
+        int hkey = fkey &(hsize-1);
+        int keyNum = num[hkey];
+        int fvalue = 0;
+        //printf("fkey: %d\n", fkey); // mat1.j -- where condition
+        //printf("hkey: %d\n", hkey); // 1 2 0 1 2 2 -- mat1.j (same as fkey)
+        //printf("keyNum: %d\n", keyNum); // 2 2 1 2 2 2, inner match times
+
+        for(int j=0;j<keyNum;j++){ // how many times for the same matched tuple (mat1.j=mat2.i)
+            // psum -- starting position of each bucket
+            int pSum = psum[hkey];
+            int dimKey = ((int *)(bucket))[2*j + 2*pSum];
+            //printf("pSum: %d\tdimKey: %d\n", pSum, dimKey);
+            //printf("i: %d\tj: %d\n", i, j);
+            
+            // pSum    1 3 0 1 3 3 ??
+            // dimKey  1 2 0 1 2 2
+
+            // fkey    1 2 0 1 2 2
+            // NOTE: i -- mat1 row id; dimId -- mat2 row id
+            //printf("matched fkey: %d\tdimId: %d\n", fkey, hkey);
             if( dimKey == fkey){
                 int dimId = ((int *)(bucket))[2*j + 2*pSum + 1];
+                //printf("matched dimId: %d\n", dimId); // 2 4 1 2 4 4 ??
+
+                //TODO: start from here
+                //factFilter[lcount] = dimId;
                 lcount ++;
                 fvalue = dimId;
-                break;
+                //break;
             }
         }
         factFilter[i] = fvalue;
+        //printf("factFilter[i]: %d\n", factFilter[i]); // 3 5 1 3 5 5
     }
-    //printf("TEST!!!\n"); // 256 times
     count[offset] = lcount;
+    //printf("lcount: %d\n", count[offset]); // total sum is 11
 }
 
 /*
@@ -339,18 +391,20 @@ __global__ void static joinFact_other(int *resPsum, char * fact,  int attrSize, 
     }
 }
 
-// TODO:DEBUG
+// fact table -> mat1 table
 __global__ void static joinFact_int(int *resPsum, char * fact,  int attrSize, long  num, int * filter, char * result){
 
     int startIndex = blockIdx.x*blockDim.x + threadIdx.x;
     int stride = blockDim.x * gridDim.x;
     long localCount = resPsum[startIndex];
 
+    //for(long i=startIndex;i<num;i+=stride){
     for(long i=startIndex;i<num;i+=stride){
         if(filter[i] != 0){
             //printf(" ===> result: %s\n", result[i]); // null
             ((int*)result)[localCount] = ((int *)fact)[i];
-            //printf(" ===> joinFact_int: %d\n", ((int *)fact)[i]); // 1
+            //TODO: first six elements are wrong ??
+            printf(" => joinFact_int val: %d\n", ((int *)fact)[i]); 
             localCount ++;
         }
     }
@@ -364,6 +418,7 @@ __global__ void static joinDim_rle(int *resPsum, char * dim, int attrSize, long 
 
     struct rleHeader *rheader = (struct rleHeader *) dim;
     int dNum = rheader->dictNum;
+    //printf("Called joinDim_rle function!!\n");
 
     for(int i = startIndex; i<tupleNum; i += stride){
         int dimId = filter[i];
@@ -418,6 +473,7 @@ __global__ void static joinDim_dict_int(int *resPsum, char * dim, struct dictHea
     }
 }
 
+// dimension table -> mat2 table
 __global__ void static joinDim_int(int *resPsum, char * dim, int attrSize, long num,int * filter, char * result){
 
     int startIndex = blockIdx.x*blockDim.x + threadIdx.x;
@@ -426,8 +482,10 @@ __global__ void static joinDim_int(int *resPsum, char * dim, int attrSize, long 
 
     for(long i=startIndex;i<num;i+=stride){
         int dimId = filter[i];
+        //printf("dimId: %d\n", dimId);
         if( dimId != 0){
             ((int*)result)[localCount] = ((int*)dim)[dimId-1];
+            printf(" <= joinDim_int val: \t\t%d\n", ((int *)dim)[dimId-1]);
             localCount ++;
         }
     }
@@ -482,6 +540,7 @@ struct tableNode * hashJoin(struct joinNode *jNode, struct statistic *pp){
     int blockNum;
     int threadNum;
 
+    //printf("jNode->rightTable->tupleNum: %d\n", jNode->rightTable->tupleNum); // 5
     blockNum = jNode->leftTable->tupleNum / block.x + 1;
     if(blockNum < defaultBlock)
         grid = blockNum;
@@ -499,6 +558,7 @@ struct tableNode * hashJoin(struct joinNode *jNode, struct statistic *pp){
     res->attrIndex = (int *) malloc(res->totalAttr * sizeof(int));
     CHECK_POINTER(res->attrIndex);
     res->attrTotalSize = (int *) malloc(res->totalAttr * sizeof(int));
+    //printf("res->totalAttr: %d\n", res->totalAttr); // why is 4?
     CHECK_POINTER(res->attrTotalSize);
     res->dataPos = (int *) malloc(res->totalAttr * sizeof(int));
     CHECK_POINTER(res->dataPos);
@@ -507,6 +567,7 @@ struct tableNode * hashJoin(struct joinNode *jNode, struct statistic *pp){
     res->content = (char **) malloc(res->totalAttr * sizeof(char *));
     CHECK_POINTER(res->content);
 
+    //printf("left output attr num: %d\n", jNode->leftOutputAttrNum);// 2
     for(int i=0;i<jNode->leftOutputAttrNum;i++){
         int pos = jNode->leftPos[i];
         res->attrType[pos] = jNode->leftOutputAttrType[i];
@@ -515,6 +576,7 @@ struct tableNode * hashJoin(struct joinNode *jNode, struct statistic *pp){
         res->dataFormat[pos] = UNCOMPRESSED;
     }
 
+    //printf("right output attr num: %d\n", jNode->rightOutputAttrNum);//2
     for(int i=0;i<jNode->rightOutputAttrNum;i++){
         int pos = jNode->rightPos[i];
         res->attrType[pos] = jNode->rightOutputAttrType[i];
@@ -532,8 +594,10 @@ struct tableNode * hashJoin(struct joinNode *jNode, struct statistic *pp){
     int *gpu_psum1 = NULL;
 
     int hsize = jNode->rightTable->tupleNum;
+    //printf("hsize: %d\n", hsize); // 5
     NP2(hsize);
 
+    //printf("after NP2 function hsize: %d\n", hsize); // 8
     CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&gpu_hashNum,sizeof(int)*hsize));
     CUDA_SAFE_CALL_NO_SYNC(cudaMemset(gpu_hashNum,0,sizeof(int)*hsize));
 
@@ -575,12 +639,22 @@ struct tableNode * hashJoin(struct joinNode *jNode, struct statistic *pp){
     CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&gpu_resPsum,sizeof(int)*threadNum));
 
     int *gpuFactFilter = NULL;
+    //int *2dFactFilter = NULL; // 2d array
+    size_t pitch;
+    int width, height;
 
     dataPos = jNode->leftTable->dataPos[jNode->leftKeyIndex];
     int format = jNode->leftTable->dataFormat[jNode->leftKeyIndex];
 
     long foreignKeySize = jNode->leftTable->attrTotalSize[jNode->leftKeyIndex];
     long filterSize = jNode->leftTable->attrSize[jNode->leftKeyIndex] * jNode->leftTable->tupleNum;
+
+    //width = filterSize;
+    //height = filterSize;
+
+    // printf("filterSize: %lld\n", filterSize); // 24, equal to foreignKeySize
+    //printf("foreignKeySize: %lld\n", jNode->leftTable->attrTotalSize[jNode->leftKeyIndex]); // 24
+    //printf("leftTable tupleNum: %lld\n", jNode->leftTable->tupleNum); // 6, mat1 table
 
     if(dataPos == MEM || dataPos == MMAP || dataPos == PINNED){
         CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&gpu_fact, foreignKeySize));
@@ -591,11 +665,14 @@ struct tableNode * hashJoin(struct joinNode *jNode, struct statistic *pp){
         gpu_fact = jNode->leftTable->content[jNode->leftKeyIndex];
     }
 
+    //CUDA_SAFE_CALL_NO_SYNC(cudaMallocPitch((void **)&2dFactFilter, &pitch, width * sizeof(int), height));
+    //CUDA_SAFE_CALL_NO_SYNC(cudaMemset2D(&2dFactFilter, pitch, 0, width, height));
+
     CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void **)&gpuFactFilter,filterSize));
     CUDA_SAFE_CALL_NO_SYNC(cudaMemset(gpuFactFilter,0,filterSize));
 
     if(format == UNCOMPRESSED)
-        count_join_result<<<grid,block>>>(gpu_hashNum, gpu_psum, gpu_bucket, gpu_fact, jNode->leftTable->tupleNum, gpu_count,gpuFactFilter,hsize);
+        count_join_result<<<grid,block>>>(gpu_hashNum, gpu_psum, gpu_bucket, gpu_fact, jNode->leftTable->tupleNum, gpu_count,gpuFactFilter,hsize); // 256 times(threads)
 
     else if(format == DICT){
         int dNum;
@@ -673,6 +750,7 @@ struct tableNode * hashJoin(struct joinNode *jNode, struct statistic *pp){
                 found = 1;
                 leftRight = 0;
                 pos = k;
+                //printf("jNode->leftPos[k] == i  i: %d\n",i);
                 break;
             }
         }
@@ -682,6 +760,8 @@ struct tableNode * hashJoin(struct joinNode *jNode, struct statistic *pp){
                     found = 1;
                     leftRight = 1;
                     pos = k;
+                    // TODO: bug here?
+                    //printf("jNode->rightPos[k] == i  i: %d\n",i);
                     break;
                 }
             }

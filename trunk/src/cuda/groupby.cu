@@ -86,6 +86,7 @@ __global__ static void count_group_num(int *num, int tupleNum, int *totalCount){
 
 __device__ static float calMathExp(char **content, struct mathExp exp, int pos){
     float res ;
+    cuPrintf("index: %d\tpos: %d\tcontent: %d\n", exp.opValue, pos, ((int *)(content[exp.opValue]))[pos]);
 
     if(exp.op == NOOP){
         if (exp.opType == CONS)
@@ -102,10 +103,10 @@ __device__ static float calMathExp(char **content, struct mathExp exp, int pos){
         res = calMathExp(content, ((struct mathExp*)exp.exp)[0],pos) - calMathExp(content, ((struct mathExp*)exp.exp)[1], pos);
 
     }else if (exp.op == MULTIPLY){
-        cuPrintf("num1: %f\tnum2: %f\n", calMathExp(content, ((struct mathExp*)exp.exp)[0],pos), calMathExp(content, ((struct mathExp*)exp.exp)[1],pos));
+        cuPrintf("num1: %.0f\t\tnum2: %.0f\n", calMathExp(content, ((struct mathExp*)exp.exp)[0],pos), calMathExp(content, ((struct mathExp*)exp.exp)[1],pos));
         res = calMathExp(content, ((struct mathExp*)exp.exp)[0],pos) * calMathExp(content, ((struct mathExp*)exp.exp)[1], pos);
         //cuPrintf("num1 * num2 = %f\n", calMathExp(content, ((struct mathExp*)exp.exp)[0],pos) * calMathExp(content, ((struct mathExp*)exp.exp)[1],pos));
-        cuPrintf("MULTIPLY res: %.6f\n", res);
+        //cuPrintf("MULTIPLY res: %.6f\n", res);
 
     }else if (exp.op == DIVIDE){
         res = calMathExp(content, ((struct mathExp*)exp.exp)[0],pos) / calMathExp(content, ((struct mathExp*)exp.exp)[1], pos);
@@ -153,33 +154,48 @@ __global__ static void agg_cal(char ** content, int colNum, struct groupByExp* e
 
     int stride = blockDim.x * gridDim.x;
     int index = blockIdx.x * blockDim.x + threadIdx.x;
+    //printf("tupleNum: %lld\n", tupleNum); // 6
+    //printf("colNum: %d\n", colNum);       // 3
 
     for(int i=index;i<tupleNum;i+=stride){
 
         int hKey = key[i];
         int offset = psum[hKey];
+        //printf("hKey: %d\toffset: %d\n", hKey, offset);
 
         for(int j=0;j<colNum;j++){
             int func = exp[j].func;
+            
             if(func ==NOOP){
+                //printf("func: %d\n", func); // 37, appear 22 times
                 int type = exp[j].exp.opType;
 
                 if(type == CONS){
                     int value = exp[j].exp.opValue;
+                    //printf("value in NOOP: %d\n", value); // didn't come here
                     ((int *)result[j])[offset] = value;
                 }else{
                     int index = exp[j].exp.opValue;
                     int attrSize = gbSize[j];
-                    if(attrSize == sizeof(int))
+                    if(attrSize == sizeof(int)) {
                         ((int *)result[j])[offset] = ((int*)content[index])[i];
+                        //printf("result[j][offset]: %d\n", ((int *)result[j])[offset]);
+                        // looks like no-op
+                    }     
                     else
                         memcpy(result[j] + offset*attrSize, content[index] + i * attrSize, attrSize);
                 }
 
             }else if (func == SUM ){
+                // values are wrong before coming to this line
+                //printf("func: %d\n", func); // 20, appear 11 times
+                // __device__ static float calMathExp(char **content, struct mathExp exp, int pos)
+                //printf("===> i: %d\tj: %d\tcontent: %d\n", i, j, ((int *)(content[exp[j].exp.opValue]))[offset]); // 0/1/2 all 11 times
                 float tmpRes = calMathExp(content, exp[j].exp, i);
+                //printf("result[j]: %d\ttmpRes: %d\n", ((int *)(result[exp[j].exp.opValue]))[offset], tmpRes);
                 atomicAdd(& ((float *)result[j])[offset], tmpRes);
             } else if (func == AVG){
+                //printf("func: %d\n", func);
                 float tmpRes = calMathExp(content, exp[j].exp, i)/groupNum[hKey];
                 atomicAdd(& ((float *)result[j])[offset], tmpRes);
             }

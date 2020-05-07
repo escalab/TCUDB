@@ -86,7 +86,7 @@ __global__ static void count_group_num(int *num, int tupleNum, int *totalCount){
 
 __device__ static float calMathExp(char **content, struct mathExp exp, int pos){
     float res ;
-    cuPrintf("index: %d\tpos: %d\tcontent: %d\n", exp.opValue, pos, ((int *)(content[exp.opValue]))[pos]);
+    //cuPrintf("index: %d\tpos: %d\tcontent: %d\n", exp.opValue, pos, ((int *)(content[exp.opValue]))[pos]);
 
     if(exp.op == NOOP){
         if (exp.opType == CONS)

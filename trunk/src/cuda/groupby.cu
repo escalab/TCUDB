@@ -103,10 +103,10 @@ __device__ static float calMathExp(char **content, struct mathExp exp, int pos){
         res = calMathExp(content, ((struct mathExp*)exp.exp)[0],pos) - calMathExp(content, ((struct mathExp*)exp.exp)[1], pos);
 
     }else if (exp.op == MULTIPLY){
-        cuPrintf("num1: %.0f\t\tnum2: %.0f\n", calMathExp(content, ((struct mathExp*)exp.exp)[0],pos), calMathExp(content, ((struct mathExp*)exp.exp)[1],pos));
+        // NOTE: here only perform multiply, so duplicates may happen
+        //cuPrintf("left table val: %.0f\t\tright table val: %.0f\n", calMathExp(content, ((struct mathExp*)exp.exp)[0],pos), calMathExp(content, ((struct mathExp*)exp.exp)[1],pos));
         res = calMathExp(content, ((struct mathExp*)exp.exp)[0],pos) * calMathExp(content, ((struct mathExp*)exp.exp)[1], pos);
-        //cuPrintf("num1 * num2 = %f\n", calMathExp(content, ((struct mathExp*)exp.exp)[0],pos) * calMathExp(content, ((struct mathExp*)exp.exp)[1],pos));
-        //cuPrintf("MULTIPLY res: %.6f\n", res);
+        //cuPrintf("result: %.0f\n", res);
 
     }else if (exp.op == DIVIDE){
         res = calMathExp(content, ((struct mathExp*)exp.exp)[0],pos) / calMathExp(content, ((struct mathExp*)exp.exp)[1], pos);
@@ -154,48 +154,39 @@ __global__ static void agg_cal(char ** content, int colNum, struct groupByExp* e
 
     int stride = blockDim.x * gridDim.x;
     int index = blockIdx.x * blockDim.x + threadIdx.x;
-    //printf("tupleNum: %lld\n", tupleNum); // 6
-    //printf("colNum: %d\n", colNum);       // 3
 
     for(int i=index;i<tupleNum;i+=stride){
 
         int hKey = key[i];
         int offset = psum[hKey];
-        //printf("hKey: %d\toffset: %d\n", hKey, offset);
 
         for(int j=0;j<colNum;j++){
             int func = exp[j].func;
             
             if(func ==NOOP){
-                //printf("func: %d\n", func); // 37, appear 22 times
                 int type = exp[j].exp.opType;
 
                 if(type == CONS){
                     int value = exp[j].exp.opValue;
-                    //printf("value in NOOP: %d\n", value); // didn't come here
                     ((int *)result[j])[offset] = value;
                 }else{
                     int index = exp[j].exp.opValue;
                     int attrSize = gbSize[j];
                     if(attrSize == sizeof(int)) {
                         ((int *)result[j])[offset] = ((int*)content[index])[i];
-                        //printf("result[j][offset]: %d\n", ((int *)result[j])[offset]);
-                        // looks like no-op
+                        //No-op
                     }     
                     else
                         memcpy(result[j] + offset*attrSize, content[index] + i * attrSize, attrSize);
                 }
 
             }else if (func == SUM ){
-                // values are wrong before coming to this line
-                //printf("func: %d\n", func); // 20, appear 11 times
-                // __device__ static float calMathExp(char **content, struct mathExp exp, int pos)
-                //printf("===> i: %d\tj: %d\tcontent: %d\n", i, j, ((int *)(content[exp[j].exp.opValue]))[offset]); // 0/1/2 all 11 times
                 float tmpRes = calMathExp(content, exp[j].exp, i);
-                //printf("result[j]: %d\ttmpRes: %d\n", ((int *)(result[exp[j].exp.opValue]))[offset], tmpRes);
+                //printf("tmpRes: %.0f\ti: %d\n", tmpRes, i); // 11 tuples not yet combined (SUM)
+
                 atomicAdd(& ((float *)result[j])[offset], tmpRes);
+                //printf("result: %.0f\tj: %d\n", ((float *)result[j])[offset], j);
             } else if (func == AVG){
-                //printf("func: %d\n", func);
                 float tmpRes = calMathExp(content, exp[j].exp, i)/groupNum[hKey];
                 atomicAdd(& ((float *)result[j])[offset], tmpRes);
             }
@@ -327,6 +318,7 @@ struct tableNode * groupBy(struct groupByNode * gb, struct statistic * pp){
         count_group_num<<<grid,block>>>(gpu_hashNum, HSIZE, gpuGbCount);
         CUDA_SAFE_CALL_NO_SYNC(cudaDeviceSynchronize());
 
+        // copy groub by count back to host
         CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(&gbCount, gpuGbCount, sizeof(int), cudaMemcpyDeviceToHost));
 
         CUDA_SAFE_CALL(cudaMalloc((void**)&gpu_psum,HSIZE*sizeof(int)));
@@ -342,9 +334,12 @@ struct tableNode * groupBy(struct groupByNode * gb, struct statistic * pp){
         res->tupleNum = gbCount;
 
     printf("[INFO]Number of groupBy results: %ld\n",res->tupleNum);
+    // after this point, computation occurs
 
     char ** gpuResult = NULL;
     char ** result = NULL;
+    
+    // DEBUG
     
     result = (char **)malloc(sizeof(char*)*res->totalAttr);
     CHECK_POINTER(result);
@@ -382,6 +377,10 @@ struct tableNode * groupBy(struct groupByNode * gb, struct statistic * pp){
 
     if(gbConstant !=1){
         agg_cal<<<grid,block>>>(gpuContent, gpuGbColNum, gpuGbExp, gpuGbType, gpuGbSize, gpuTupleNum, gpuGbKey, gpu_psum, gpu_groupNum,gpuResult);
+        // TODO: at this point, print gpuResult to see if aggregate correctly
+        //CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(&result, &gpuResult, sizeof(char *), cudaMemcpyDeviceToHost));
+        //printf("host result: %s\n", result);
+
         CUDA_SAFE_CALL_NO_SYNC(cudaFree(gpuGbKey));
         CUDA_SAFE_CALL_NO_SYNC(cudaFree(gpu_psum));
         CUDA_SAFE_CALL_NO_SYNC(cudaFree(gpu_groupNum));

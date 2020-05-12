@@ -76,3 +76,5 @@ Run query (e.g., datadir is where binary table files such as MAT30, MAT31, MAT32
 e.g., 
 
 `./GPUDATABASE --datadir ../utility/`
+
+Example output for `test3.sql` and `test4.sql`: [Example_results](https://github.com/escalab/TCUDB/blob/master/trunk/test/simple_test/test_result.txt)

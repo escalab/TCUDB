@@ -8,3 +8,5 @@ trunk/src/utility/PART*
 trunk/src/utility/SUPPLIER*
 trunk/src/utility/DDATE*
 trunk/src/utility/CUSTOMER*
+trunk/src/cuda/driver.cu
+trunk/src/include/schema.h

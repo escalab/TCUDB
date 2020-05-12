@@ -6,7 +6,10 @@ and d_year = 1993 and lo_discount>=1
 and lo_discount<=3
 and lo_quantity<25;
 */
-select
-  mat1.i
-from  (select * from matrices where matrix_id = 1) as mat1
-;
+SELECT
+  MAT3.j,
+  MAT4.i,
+  sum(MAT3.val * MAT4.val) as res
+FROM MAT3, MAT4
+WHERE MAT3.i = MAT4.j 
+GROUP BY MAT3.j, MAT4.i;

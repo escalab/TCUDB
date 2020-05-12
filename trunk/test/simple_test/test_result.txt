@@ -1,0 +1,25 @@
+test3.sql with mat1.tbl and mat2.tbl
+
+[INFO]Number of join results: 11
+HashJoin Time: 0.477763
+[INFO]Number of groupBy results: 8
+GroupBy Time: 0.768694
+Materialization Time: 0.064066
+Disk Load Time: 0.034229
+PCIe Time: 0.000000
+Kernel Time: 0.000000
+Total Time: 1.792572
+
+====================================
+
+test4.sql with mat3.tbl and mat4.tbl
+
+[INFO]Number of join results: 10
+HashJoin Time: 0.449894
+[INFO]Number of groupBy results: 7
+GroupBy Time: 0.732543
+Materialization Time: 0.062915
+Disk Load Time: 0.033699
+PCIe Time: 0.000000
+Kernel Time: 0.000000
+Total Time: 1.692865

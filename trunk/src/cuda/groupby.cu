@@ -26,6 +26,16 @@
 #include "../include/cuPrintf.cu"
 #include "../include/cuPrintf.cuh"
 
+#define ERROR_CHECK(ans) { gpuAssert((ans), __FILE__, __LINE__); }
+inline void gpuAssert(cudaError_t code, const char *file, int line, bool abort=true)
+{
+    if (code != cudaSuccess)
+    {
+        fprintf(stderr,"GPUassert: %s %s %d\n", cudaGetErrorString(code), file, line);
+        if (abort) exit(code);
+    }
+}
+
 /*
  * Combine the group by columns to build the group by keys. 
  */
@@ -182,10 +192,9 @@ __global__ static void agg_cal(char ** content, int colNum, struct groupByExp* e
 
             }else if (func == SUM ){
                 float tmpRes = calMathExp(content, exp[j].exp, i);
-                //printf("tmpRes: %.0f\ti: %d\n", tmpRes, i); // 11 tuples not yet combined (SUM)
 
                 atomicAdd(& ((float *)result[j])[offset], tmpRes);
-                //printf("result: %.0f\tj: %d\n", ((float *)result[j])[offset], j);
+                //printf("result: %.0f\tj: %d\toffset: %d\n", ((float *)result[j])[offset], j, offset);
             } else if (func == AVG){
                 float tmpRes = calMathExp(content, exp[j].exp, i)/groupNum[hKey];
                 atomicAdd(& ((float *)result[j])[offset], tmpRes);
@@ -339,12 +348,11 @@ struct tableNode * groupBy(struct groupByNode * gb, struct statistic * pp){
     char ** gpuResult = NULL;
     char ** result = NULL;
     
-    // DEBUG
-    
     result = (char **)malloc(sizeof(char*)*res->totalAttr);
     CHECK_POINTER(result);
     CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&gpuResult, sizeof(char *)* res->totalAttr));
 
+    //printf("res->totalAttr: %d\n", res->totalAttr); //3
     for(int i=0; i<res->totalAttr;i++){
         CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&result[i], res->tupleNum * res->attrSize[i]));
         CUDA_SAFE_CALL_NO_SYNC(cudaMemset(result[i], 0, res->tupleNum * res->attrSize[i]));
@@ -377,15 +385,23 @@ struct tableNode * groupBy(struct groupByNode * gb, struct statistic * pp){
 
     if(gbConstant !=1){
         agg_cal<<<grid,block>>>(gpuContent, gpuGbColNum, gpuGbExp, gpuGbType, gpuGbSize, gpuTupleNum, gpuGbKey, gpu_psum, gpu_groupNum,gpuResult);
-        // TODO: at this point, print gpuResult to see if aggregate correctly
-        //CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(&result, &gpuResult, sizeof(char *), cudaMemcpyDeviceToHost));
-        //printf("host result: %s\n", result);
 
         CUDA_SAFE_CALL_NO_SYNC(cudaFree(gpuGbKey));
         CUDA_SAFE_CALL_NO_SYNC(cudaFree(gpu_psum));
         CUDA_SAFE_CALL_NO_SYNC(cudaFree(gpu_groupNum));
     }else
         agg_cal_cons<<<grid,block>>>(gpuContent, gpuGbColNum, gpuGbExp, gpuTupleNum,gpuResult);
+
+    //char ** test = NULL;
+    //ERROR_CHECK(cudaMemcpy(test, gpuResult, 24, cudaMemcpyDeviceToHost));
+    /*
+    for(int i=0; i<res->totalAttr;i++) { // res->totalAttr=3
+        test[i] =(char *)malloc(res->tupleNum * res->attrSize[i]);
+        memset(test[i], 0, res->tupleNum * res->attrSize[i]);
+        CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(&test[i], &gpuResult[i], sizeof(char *), cudaMemcpyDeviceToHost));
+    }*/
+    //printf("Host result: %f\n", ((float*)test[2])[0]);
+    
 
     for(int i=0; i<gb->table->totalAttr;i++){
         if(gb->table->dataPos[i]==MEM)

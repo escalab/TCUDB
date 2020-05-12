@@ -1,10 +1,17 @@
 # TCUDB
 
-### Generate data loader (build xml tree), enter `trunk` directory
-`./translate.py test/ssb_test/ssb.schema`
+## Data generator
 
-### SSBM plain data generation
+Use SSBM plain data generation as an example.
+
+Generate data loader (build xml tree), enter `trunk` directory.
+
+`./translate.py <table_schema>`
+
+e.g.,
+
 ```
+./translate.py test/ssb_test/ssb.schema`
 cd test/dbgen
 make
 ```
@@ -13,45 +20,59 @@ Create data with scale factor 1 GB
 
 `./dbgen -vfF -T a -s 1`
 
-### Enter src/utility directory, load SSBM data
-generate "gpuDBLoader" to transform the original data (`gcc -o gpuDBLoader load.c`)
+Enter `src/utility` directory, and load SSBM data.
+
+Generate "gpuDBLoader" to transform the original data
 
 `make loader` 
-load data 
 
-`./gpuDBLoader --lineorder ../../test/dbgen/lineorder.tbl --ddate ../../test/dbgen/date.tbl --customer ../../test/dbgen/customer.tbl --supplier ../../test/dbgen/supplier.tbl --part ../../test/dbgen/part.tbl`
+## Load data from tables 
 
 
-### Code generation (cuda code, e.g., driver.cu)
+**`./gpuDBLoader --<table_name> <path_to_table>`**
+
+
+e.g.,
+
+```
+./gpuDBLoader --lineorder ../../test/dbgen/lineorder.tbl \
+               --ddate ../../test/dbgen/date.tbl \
+               --customer ../../test/dbgen/customer.tbl \
+               --supplier ../../test/dbgen/supplier.tbl \
+               --part ../../test/dbgen/part.tbl
+```
+or
+
+```
+./gpuDBLoader --mat3 ../../test/dbgen/mat3.tbl \
+              --mat4 ../../test/dbgen/mat4.tbl
+```
+
+## CUDA code generation (e.g., driver.cu)
+
+**`./translate.py <query> <table_schema>`**
+
+e.g.,
+
 `./translate.py test/ssb_test/q1_1.sql test/ssb_test/ssb.schema`
-```
---------------------------------------------------------------------
-Generating XML tree ...
-Generating GPU Codes ...
-Done
---------------------------------------------------------------------
-```
+
+or
+
+`./translate.py test/simple_test/test4.sql test/simple_test/simple.schema`
 
 Enter `src/cuda` or `src/opencl` directory
-(make sure the gencode arch for the GPU device, modify the makefile in `src/cuda`)
+(make sure the gencode arch for the GPU device, modify the makefile in `src/cuda`, ).
 
-generate an executable file named `GPUDATABASE`
+Note: This experiment was conducted using NVIDIA RTX2080: `-gencode arch=compute_70,code=sm_70 -gencode arch=compute_75,code=sm_75`
+
+Generate an executable program `GPUDATABASE` (main program).
 
 `make gpudb`
 
-Run query (e.g., datadir is where MATRICES0, MATRICES1... are located)
+Run query (e.g., datadir is where binary table files such as MATRICES0, MATRICES1...etc are located).
 
-`./GPUDATABASE --datadir dir`
+**`./GPUDATABASE --datadir dir`**
 
-e.g., ./GPUDATABASE --datadir ./GPUDATABASE --datadir ../utility/
+e.g., 
 
-```
-# example output for ssb_test/q1_1.sql
-[INFO]Number of groupBy results: 1
-GroupBy Time: 0.913627
-Materialization Time: 0.062024
-Disk Load Time: 0.000000
-PCIe Time: 0.000000
-Kernel Time: 0.000000
-Total Time: 1.018521
-```
+`./GPUDATABASE --datadir ../utility/`

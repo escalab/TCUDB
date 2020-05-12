@@ -69,7 +69,7 @@ Generate an executable program `GPUDATABASE` (main program).
 
 `make gpudb`
 
-Run query (e.g., datadir is where binary table files such as MATRICES0, MATRICES1...etc are located).
+Run query (e.g., datadir is where binary table files such as MAT30, MAT31, MAT32, MAT40...etc are located).
 
 **`./GPUDATABASE --datadir dir`**
 

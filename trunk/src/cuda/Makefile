@@ -18,12 +18,21 @@ GENCODE_SM30    := -gencode arch=compute_30,code=sm_30 -gencode arch=compute_35,
 GENCODE_SM70    := -gencode arch=compute_70,code=sm_70 -gencode arch=compute_75,code=sm_75
 GENCODE_FLAGS   := $(GENCODE_SM70)
 
+INCLUDES   := -I../include
+
 ifeq ($(OS_SIZE),32)
     LDFLAGS   := -lcudart -lrt
 else
     LDFLAGS   := -lcudart -lrt
 endif
 
+cudaTensorCoreGemm.o:cudaTensorCoreGemm.cu
+	$(EXEC) $(NVCC) $(INCLUDES) $(GENCODE_FLAGS) -o $@ -c $<
+	#$(EXEC) $(NVCC) $(INCLUDES) $(ALL_CCFLAGS) $(GENCODE_FLAGS) -o $@ -c $<
+
+cudaTensorCoreGemm: cudaTensorCoreGemm.o
+	$(EXEC) $(NVCC) $(GENCODE_FLAGS) -o $@ $+ 
+	#$(EXEC) $(NVCC) $(ALL_LDFLAGS) $(GENCODE_FLAGS) -o $@ $+ $(LIBRARIES)
 
 gpudb: gpu cpu
 	 $(NVCC) -pg tableScan.o inviJoin.o hashJoin.o cuckoo.o materialize.o groupby.o orderBy.o driver.o $(LDFLAGS) -o GPUDATABASE
@@ -37,4 +46,4 @@ gpu: tableScan.cu hashJoin.cu cuckoo.cu inviJoin.cu materialize.cu groupby.cu or
 all: gpudb
 
 clean:
-	rm -rf *.o GPUDATABASE
+	rm -rf *.o GPUDATABASE cudaTensorCoreGemm cudaTensorCoreGemm.o

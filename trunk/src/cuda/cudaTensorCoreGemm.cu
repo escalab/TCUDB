@@ -180,6 +180,38 @@
 
 using namespace nvcuda;
 
+/* create mat3, mat4 for TensorGEMM */
+__host__ void manually_create_matrices(half *a, half *b, float *c) {
+  for (int i = 0; i < M_GLOBAL; i++) {
+    for (int j = 0; j < K_GLOBAL; j++) {
+      a[i * K_GLOBAL + j] = (half)(0);
+    }
+  }
+
+  a[0] = (half)(7);
+  a[2] = (half)(1);
+  a[18] = (half)(-2);
+  a[32] = (half)(-10);
+  a[33] = (half)(4);
+
+  for (int i = 0; i < N_GLOBAL; i++) {
+    for (int j = 0; j < K_GLOBAL; j++) {
+      b[i * K_GLOBAL + j] = (half)(0);
+    }
+  }
+
+  b[0] = (half)(4); 
+  b[1] = (half)(-5); 
+  b[16] = (half)(11); 
+  b[18] = (half)(1); 
+  b[32] = (half)(-3); 
+  b[33] = (half)(6); 
+
+  for (int t = 0; t < M_GLOBAL * N_GLOBAL; t++) {
+    c[t] = static_cast<float>(rand() % 3);
+  }
+}
+
 __host__ void init_host_matrices(half *a, half *b, float *c) {
   for (int i = 0; i < M_GLOBAL; i++) {
     for (int j = 0; j < K_GLOBAL; j++) {
@@ -538,7 +570,9 @@ int main(int argc, char **argv) {
   assert(((unsigned long long)C) % 128 == 0);
   assert(((unsigned long long)D) % 128 == 0);
 
-  init_host_matrices(A_h, B_h, C_h);
+  // pass mat1/mat2
+  manually_create_matrices(A_h, B_h, C_h);
+  //init_host_matrices(A_h, B_h, C_h);
 
   printf("Preparing data for GPU...\n");
 

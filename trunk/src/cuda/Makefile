@@ -34,6 +34,9 @@ cudaTensorCoreGemm: cudaTensorCoreGemm.o
 	$(EXEC) $(NVCC) $(GENCODE_FLAGS) -o $@ $+ 
 	#$(EXEC) $(NVCC) $(ALL_LDFLAGS) $(GENCODE_FLAGS) -o $@ $+ $(LIBRARIES)
 
+TCGemm: simpleTensorCoreGEMM.cu
+	$(NVCC) -o TCGemm -arch=sm_70 -lcublas -lcurand simpleTensorCoreGEMM.cu
+
 gpudb: gpu cpu
 	 $(NVCC) -pg tableScan.o inviJoin.o hashJoin.o cuckoo.o materialize.o groupby.o orderBy.o driver.o $(LDFLAGS) -o GPUDATABASE
 
@@ -46,4 +49,4 @@ gpu: tableScan.cu hashJoin.cu cuckoo.cu inviJoin.cu materialize.cu groupby.cu or
 all: gpudb
 
 clean:
-	rm -rf *.o GPUDATABASE cudaTensorCoreGemm cudaTensorCoreGemm.o
+	rm -rf *.o GPUDATABASE cudaTensorCoreGemm cudaTensorCoreGemm.o 

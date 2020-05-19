@@ -26,14 +26,6 @@ else
     LDFLAGS   := -lcudart -lrt
 endif
 
-cudaTensorCoreGemm.o:cudaTensorCoreGemm.cu
-	$(EXEC) $(NVCC) $(INCLUDES) $(GENCODE_FLAGS) -o $@ -c $<
-	#$(EXEC) $(NVCC) $(INCLUDES) $(ALL_CCFLAGS) $(GENCODE_FLAGS) -o $@ -c $<
-
-cudaTensorCoreGemm: cudaTensorCoreGemm.o
-	$(EXEC) $(NVCC) $(GENCODE_FLAGS) -o $@ $+ 
-	#$(EXEC) $(NVCC) $(ALL_LDFLAGS) $(GENCODE_FLAGS) -o $@ $+ $(LIBRARIES)
-
 TCGemm: simpleTensorCoreGEMM.cu
 	$(NVCC) -o TCGemm -arch=sm_70 -lcublas -lcurand simpleTensorCoreGEMM.cu
 

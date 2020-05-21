@@ -76,6 +76,45 @@ const int WMMA_M = 16;
 const int WMMA_N = 16;
 const int WMMA_K = 16;
 
+int large_mat1[256], large_mat2[256];
+char large_mat1_txt[15] = "large_mat1.txt";
+char large_mat2_txt[15] = "large_mat2.txt";
+
+__host__ void read_txt(char * infile, int * matrix) {
+    FILE* fp = fopen(infile, "r");
+    if (fp == NULL) {
+        printf("File does not exist.");
+        return;
+    }
+
+    for (int i = 0; i < 256; i++) {
+        fscanf(fp, "%d", &matrix[i]);
+    }
+
+}
+
+// TODO:convert to fp16 and fp32
+__host__ void convertIntToFp16 (half *out, int *in) {
+//__global__ void convertIntToFp16 (half *out, int *in, int n) {
+   /* 
+   int idx = blockDim.x * blockIdx.x + threadIdx.x;
+   if (idx < n) {
+      out[idx] = in[idx];
+   }*/
+    for (int i = 0; i < 256; i++)
+        out[i] = (half)in[i];
+}
+
+__host__ void convertIntToFp32 (float *out, int *in) {
+//__global__ void convertIntToFp32 (float *out, int *in, int n) {
+    /*
+   int idx = blockDim.x * blockIdx.x + threadIdx.x;
+   if (idx < n) {
+      out[idx] = in[idx];
+   }*/
+    for(int i = 0; i < 256; i++)
+        out[i] = (float)in[i];
+}
 
 __host__ void generate_data_fp16(half *a, half *b) {
   
@@ -290,8 +329,21 @@ int main(int argc, char* argv[]) {
    curandErrCheck(curandSetPseudoRandomGeneratorSeed(gen, 1337ULL)); // usgined long long
 
    //FIXME: manually change to certain number for comparison for now
-   generate_data_fp16(a_h, b_h);
-   generate_data_fp32(a_32h, b_32h);
+   read_txt(large_mat1_txt, large_mat1);
+   read_txt(large_mat2_txt, large_mat2);
+
+   // convert to corresponding type
+   //convertIntToFp16 <<< (MATRIX_M * MATRIX_K + 255) / 256, 256 >>> (a_h, large_mat1, MATRIX_M * MATRIX_K);
+   //convertIntToFp16 <<< (MATRIX_K * MATRIX_N + 255) / 256, 256 >>> (b_h, large_mat2, MATRIX_K * MATRIX_N);
+   convertIntToFp16(a_h, large_mat1);
+   convertIntToFp16(b_h, large_mat2);
+
+   //generate_data_fp16(a_h, b_h);
+   //generate_data_fp32(a_32h, b_32h);
+   //convertIntToFp32 <<< (MATRIX_M * MATRIX_K + 255) / 256, 256 >>> (a_32h, large_mat1, MATRIX_M * MATRIX_K);
+   //convertIntToFp32 <<< (MATRIX_K * MATRIX_N + 255) / 256, 256 >>> (b_32h, large_mat2, MATRIX_K * MATRIX_N);
+   convertIntToFp32(a_32h, large_mat1);
+   convertIntToFp32(b_32h, large_mat2);
 
    cudaErrCheck(cudaMemcpy(a_fp16, a_h, sizeof(half) * MATRIX_M * MATRIX_K, cudaMemcpyHostToDevice));
    cudaErrCheck(cudaMemcpy(b_fp16, b_h, sizeof(half) * MATRIX_K * MATRIX_N, cudaMemcpyHostToDevice));

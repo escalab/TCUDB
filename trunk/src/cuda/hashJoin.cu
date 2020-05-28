@@ -30,6 +30,15 @@
 #include "../include/gpuCudaLib.h"
 #include "scanImpl.cu"
 
+// For wmma API, these must be multiples fo 16
+#define MATRIX_M 16
+#define MATRIX_N 16
+#define MATRIX_K 16
+
+const int WMMA_M = 16;
+const int WMMA_N = 16;
+const int WMMA_K = 16;
+
 /*
  * Count the number of dimension keys for each bucket.
  */
@@ -509,6 +518,51 @@ __global__ void static joinDim_other(int *resPsum, char * dim, int attrSize, lon
     }
 }
 
+/* Map the table entires into matrix for tensor core to use */
+//TODO: support 2 matrices
+__host__ void static fill_matrix(struct joinNode *jNode, int * matrix1, int width) {
+    int *mat1_i, *mat1_j, *mat1_val;
+    int leftTupleNum = jNode->leftTable->tupleNum;
+ 
+    mat1_i = (int*)malloc(sizeof(int) * leftTupleNum); 
+    mat1_j = (int*)malloc(sizeof(int) * leftTupleNum); 
+    mat1_val = (int*)malloc(sizeof(int) * leftTupleNum); 
+   
+    int i, j; 
+    for (i = 0; i < 3; i++) { // FIXME: range of i depends on the schema, later change to a variable
+        int col_idx = jNode->leftTable->attrIndex[i];
+        int k = 0; // k is tupleNum of the table
+        
+        // FIXME: attrSize
+        for (j = 0; j < leftTupleNum*jNode->leftTable->attrSize[0]; j+=jNode->leftTable->attrSize[0]) { // type: int
+            
+            if (col_idx == 0) { // match to schema's i
+                mat1_i[k] = jNode->leftTable->content[i][j];
+            }
+            else if (col_idx == 1) { // match to schema's j
+                mat1_j[k] = jNode->leftTable->content[i][j];
+            }
+            else { // match to schema's val
+                mat1_val[k] = jNode->leftTable->content[i][j];
+            }
+            k++;
+        }
+    }
+
+    // map index to array[width * i + j] = val, where width is 16 for now
+    int m;
+    for (m = 0; m < leftTupleNum; m++) {
+        matrix1[width * mat1_i[m] + mat1_j[m]] = mat1_val[m];
+    }
+
+}
+
+// TODO: implement TCU join and time the elapse
+__global__ void static tcu_join() {
+
+
+
+}
 
 /*
  * hashJoin implements the foreign key join between a fact table and dimension table.
@@ -550,6 +604,7 @@ struct tableNode * hashJoin(struct joinNode *jNode, struct statistic *pp){
 
     res = (struct tableNode*) malloc(sizeof(struct tableNode));
     CHECK_POINTER(res);
+    // get data from jNode tableNode
     res->totalAttr = jNode->totalAttr;
     res->tupleSize = jNode->tupleSize;
     res->attrType = (int *) malloc(res->totalAttr * sizeof(int));
@@ -588,6 +643,42 @@ struct tableNode * hashJoin(struct joinNode *jNode, struct statistic *pp){
 /*
  *  build hash table on GPU
  */
+    // matrix for TCU join, FIXME: 256 will change to variable later
+    int *matrix1;
+
+    matrix1 = (int*)calloc(256, sizeof(int));
+
+    fill_matrix(jNode, matrix1, MATRIX_M);
+    
+    // organize to debug function later
+    printf("Check matrix1:\n");
+    int q;
+    for (q = 0; q < 256; q++) {
+        printf("%d\t", matrix1[q]);
+        if ((q+1) % 16 == 0)
+          printf("\n");  
+    }
+    
+    /*
+    int i, j;
+    // debug   
+    for (i = 0; i < 3; i++) { // seq: j, val, i
+        printf("column index: %d\n",jNode->leftTable->attrIndex[i]);
+        for (j = 0; j < (jNode->leftTable->tupleNum)*jNode->leftTable->attrSize[0]; j+=jNode->leftTable->attrSize[0]) { // attrType = int
+            printf("fact: %d\t", jNode->leftTable->content[i][j]);
+        }
+        printf("\n\n");
+    }
+
+    for (i = 0; i < 3; i++) { // seq: i, val, j
+        printf("column index: %d\n",jNode->rightTable->attrIndex[i]);
+        for (j = 0; j < (jNode->rightTable->tupleNum)*jNode->rightTable->attrSize[0]; j+=jNode->rightTable->attrSize[0]) {
+            printf("dim: %d\t", jNode->rightTable->content[i][j]);
+        }
+        printf("\n\n");
+    }
+    */
+
     int *gpu_psum1 = NULL;
 
     int hsize = jNode->rightTable->tupleNum;
@@ -627,6 +718,8 @@ struct tableNode * hashJoin(struct joinNode *jNode, struct statistic *pp){
 /*
  *  join on GPU
  */
+    //TODO: TCU join calling point
+
     threadNum = grid.x * block.x;
 
     CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&gpu_count,sizeof(int)*threadNum));
@@ -751,7 +844,7 @@ struct tableNode * hashJoin(struct joinNode *jNode, struct statistic *pp){
         }
 
         if(leftRight == 0){
-            index = jNode->leftOutputIndex[pos];
+            index = jNode->leftOutputIndex[pos]; // 0
             dataPos = jNode->leftTable->dataPos[index];
             format = jNode->leftTable->dataFormat[index];
 
@@ -762,7 +855,7 @@ struct tableNode * hashJoin(struct joinNode *jNode, struct statistic *pp){
 
             resSize = res->tupleNum * attrSize;
         }else{
-            index = jNode->rightOutputIndex[pos];
+            index = jNode->rightOutputIndex[pos]; // 1
             dataPos = jNode->rightTable->dataPos[index];
             format = jNode->rightTable->dataFormat[index];
 
@@ -788,6 +881,7 @@ struct tableNode * hashJoin(struct joinNode *jNode, struct statistic *pp){
                 }
 
                 if(attrSize == sizeof(int))
+                    // TODO: or call TCU join here
                     joinFact_int<<<grid,block>>>(gpu_resPsum,gpu_fact, attrSize, jNode->leftTable->tupleNum,newFactFilter,gpu_result, right_tupleNum);
                     //joinFact_int<<<grid,block>>>(gpu_resPsum,gpu_fact, attrSize, jNode->leftTable->tupleNum,gpuFactFilter,gpu_result);
                 else

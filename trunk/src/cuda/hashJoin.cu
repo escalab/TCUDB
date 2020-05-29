@@ -518,28 +518,41 @@ __global__ void static joinDim_other(int *resPsum, char * dim, int attrSize, lon
     }
 }
 
-/* Map the table entires into matrix for tensor core to use */
+/* Map the table entires into matrix for tensor core to use 
+ * Assum both matrix have the same dimension for now, e.g., both 16x16
+ * FIXME: attrType should also be a parameter -> sizeof(some_type)
+ */
 //TODO: support 2 matrices
-__host__ void static fill_matrix(struct joinNode *jNode, int * matrix1, int width) {
+__host__ void static fill_matrix(struct joinNode *jNode, int * matrix1, int * matrix2, int width) {
     int *mat1_i, *mat1_j, *mat1_val;
+    int *mat2_i, *mat2_j, *mat2_val;
+
     int leftTupleNum = jNode->leftTable->tupleNum;
+    int left_stride = jNode->leftTable->attrSize[0];
+
+    int rightTupleNum = jNode->rightTable->tupleNum;
+    int right_stride = jNode->rightTable->attrSize[0];
  
     mat1_i = (int*)malloc(sizeof(int) * leftTupleNum); 
     mat1_j = (int*)malloc(sizeof(int) * leftTupleNum); 
     mat1_val = (int*)malloc(sizeof(int) * leftTupleNum); 
    
+    mat2_i = (int*)malloc(sizeof(int) * rightTupleNum); 
+    mat2_j = (int*)malloc(sizeof(int) * rightTupleNum); 
+    mat2_val = (int*)malloc(sizeof(int) * rightTupleNum); 
+
     int i, j; 
     for (i = 0; i < 3; i++) { // FIXME: range of i depends on the schema, later change to a variable
-        int col_idx = jNode->leftTable->attrIndex[i];
+        int left_col_idx = jNode->leftTable->attrIndex[i];
         int k = 0; // k is tupleNum of the table
         
-        // FIXME: attrSize
-        for (j = 0; j < leftTupleNum*jNode->leftTable->attrSize[0]; j+=jNode->leftTable->attrSize[0]) { // type: int
+        // FIXME: attrSize, stride is 4 for int
+        for (j = 0; j < leftTupleNum * left_stride; j+=left_stride) { // type: int
             
-            if (col_idx == 0) { // match to schema's i
+            if (left_col_idx == 0) { // match to schema's i
                 mat1_i[k] = jNode->leftTable->content[i][j];
             }
-            else if (col_idx == 1) { // match to schema's j
+            else if (left_col_idx == 1) { // match to schema's j
                 mat1_j[k] = jNode->leftTable->content[i][j];
             }
             else { // match to schema's val
@@ -549,10 +562,45 @@ __host__ void static fill_matrix(struct joinNode *jNode, int * matrix1, int widt
         }
     }
 
+    
+    for (i = 0; i < 3; i++) {
+        int right_col_idx = jNode->rightTable->attrIndex[i];
+        int k = 0; // k is tupleNum of the table
+        
+        for (j = 0; j < rightTupleNum * right_stride; j+=right_stride) {
+            
+            if (right_col_idx == 0) { // match to schema's i
+                mat2_i[k] = jNode->rightTable->content[i][j];
+            }
+            else if (right_col_idx == 1) { // match to schema's j
+                mat2_j[k] = jNode->rightTable->content[i][j];
+            }
+            else { // match to schema's val
+                mat2_val[k] = jNode->rightTable->content[i][j];
+            }
+            k++;
+        }
+    }
+
     // map index to array[width * i + j] = val, where width is 16 for now
     int m;
     for (m = 0; m < leftTupleNum; m++) {
         matrix1[width * mat1_i[m] + mat1_j[m]] = mat1_val[m];
+    }
+    
+    for (m = 0; m < rightTupleNum; m++) {
+        matrix2[width * mat2_i[m] + mat2_j[m]] = mat2_val[m];
+    }
+
+}
+
+__host__ void static print_matrix(int * matrix, int width) {
+
+    int i;
+    for (i = 0; i < width*width; i++) {
+        printf("%d\t", matrix[i]);
+        if ((i+1) % width == 0)
+          printf("\n");  
     }
 
 }
@@ -645,19 +693,26 @@ struct tableNode * hashJoin(struct joinNode *jNode, struct statistic *pp){
  */
     // matrix for TCU join, FIXME: 256 will change to variable later
     int *matrix1;
+    int *matrix2;
 
     matrix1 = (int*)calloc(256, sizeof(int));
+    matrix2 = (int*)calloc(256, sizeof(int));
 
-    fill_matrix(jNode, matrix1, MATRIX_M);
+    fill_matrix(jNode, matrix1, matrix2, MATRIX_M);
     
     // organize to debug function later
+    /*
     printf("Check matrix1:\n");
     int q;
     for (q = 0; q < 256; q++) {
         printf("%d\t", matrix1[q]);
         if ((q+1) % 16 == 0)
           printf("\n");  
-    }
+    }*/
+    printf("Matrix 1:\n");
+    print_matrix(matrix1, MATRIX_M);
+    printf("Matrix 2:\n");
+    print_matrix(matrix2, MATRIX_M);
     
     /*
     int i, j;
@@ -751,8 +806,8 @@ struct tableNode * hashJoin(struct joinNode *jNode, struct statistic *pp){
     CUDA_SAFE_CALL_NO_SYNC(cudaMemset(newFactFilter,0,newSize));
 
     if(format == UNCOMPRESSED) {
-        count_join_result2<<<grid,block>>>(gpu_hashNum, gpu_psum, gpu_bucket, gpu_fact, jNode->leftTable->tupleNum, gpu_count,gpuFactFilter,newFactFilter,hsize, right_tupleNum); // 256 times(threads)
-        //count_join_result<<<grid,block>>>(gpu_hashNum, gpu_psum, gpu_bucket, gpu_fact, jNode->leftTable->tupleNum, gpu_count,gpuFactFilter,hsize); // 256 times(threads)
+        count_join_result2<<<grid,block>>>(gpu_hashNum, gpu_psum, gpu_bucket, gpu_fact, jNode->leftTable->tupleNum, gpu_count,gpuFactFilter,newFactFilter,hsize, right_tupleNum);
+        //count_join_result<<<grid,block>>>(gpu_hashNum, gpu_psum, gpu_bucket, gpu_fact, jNode->leftTable->tupleNum, gpu_count,gpuFactFilter,hsize);
     }
     else if(format == DICT){
         int dNum;

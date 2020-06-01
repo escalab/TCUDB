@@ -540,18 +540,14 @@ __global__ void static joinDim_other(int *resPsum, char * dim, int attrSize, lon
 
 /* Map the table entires into matrix for tensor core to use 
  * Assum both matrix have the same dimension for now, e.g., both 16x16
- * FIXME: attrType should also be a parameter -> sizeof(some_type)
  */
-//TODO: support 2 matrices
-__host__ void static fill_matrix(struct joinNode *jNode, int * matrix1, int * matrix2, int width) {
+__host__ void static fill_matrix(struct joinNode *jNode, int * matrix1, int * matrix2, int width,
+        int attr_num1, int attr_num2, int attr_type1, int attr_type2) {
     int *mat1_i, *mat1_j, *mat1_val;
     int *mat2_i, *mat2_j, *mat2_val;
 
     int leftTupleNum = jNode->leftTable->tupleNum;
-    int left_stride = jNode->leftTable->attrSize[0];
-
     int rightTupleNum = jNode->rightTable->tupleNum;
-    int right_stride = jNode->rightTable->attrSize[0];
  
     mat1_i = (int*)malloc(sizeof(int) * leftTupleNum); 
     mat1_j = (int*)malloc(sizeof(int) * leftTupleNum); 
@@ -562,15 +558,17 @@ __host__ void static fill_matrix(struct joinNode *jNode, int * matrix1, int * ma
     mat2_val = (int*)malloc(sizeof(int) * rightTupleNum); 
 
     int i, j; 
-    for (i = 0; i < 3; i++) { // FIXME: range of i depends on the schema, later change to a variable
+    for (i = 0; i < attr_num1; i++) {
         int left_col_idx = jNode->leftTable->attrIndex[i];
         int k = 0; // k is tupleNum of the table
         
-        // FIXME: attrSize, stride is 4 for int
-        for (j = 0; j < leftTupleNum * left_stride; j+=left_stride) { // type: int
+        for (j = 0; j < leftTupleNum * attr_type1; j+=attr_type1) {
             
             if (left_col_idx == 0) { // match to schema's i
                 mat1_i[k] = jNode->leftTable->content[i][j];
+                //mat1_i[k] += jNode->leftTable->content[i][j+1];
+                //mat1_i[k] += jNode->leftTable->content[i][j+2];
+                //mat1_i[k] += jNode->leftTable->content[i][j+3];
             }
             else if (left_col_idx == 1) { // match to schema's j
                 mat1_j[k] = jNode->leftTable->content[i][j];
@@ -583,11 +581,11 @@ __host__ void static fill_matrix(struct joinNode *jNode, int * matrix1, int * ma
     }
 
     
-    for (i = 0; i < 3; i++) {
+    for (i = 0; i < attr_num2; i++) {
         int right_col_idx = jNode->rightTable->attrIndex[i];
         int k = 0; // k is tupleNum of the table
         
-        for (j = 0; j < rightTupleNum * right_stride; j+=right_stride) {
+        for (j = 0; j < rightTupleNum * attr_type2; j+=attr_type2) {
             
             if (right_col_idx == 0) { // match to schema's i
                 mat2_i[k] = jNode->rightTable->content[i][j];
@@ -602,7 +600,7 @@ __host__ void static fill_matrix(struct joinNode *jNode, int * matrix1, int * ma
         }
     }
 
-    // map index to array[width * i + j] = val, where width is 16 for now
+    // map index to array[width * i + j] = val
     int m;
     for (m = 0; m < leftTupleNum; m++) {
         matrix1[width * mat1_i[m] + mat1_j[m]] = mat1_val[m];
@@ -612,6 +610,12 @@ __host__ void static fill_matrix(struct joinNode *jNode, int * matrix1, int * ma
         matrix2[width * mat2_i[m] + mat2_j[m]] = mat2_val[m];
     }
 
+    free(mat1_i);
+    free(mat1_j);
+    free(mat1_val);
+    free(mat2_i);
+    free(mat2_j);
+    free(mat2_val);
 }
 
 /* Printf matrix for debugging */
@@ -696,7 +700,6 @@ __global__ void wmma_example(half *a, half *b, float *c, int M, int N, int K, fl
 
 // TODO: implement TCU join and time the elapse
 __global__ void static tcu_join() {
-
 
 
 }
@@ -787,12 +790,22 @@ struct tableNode * hashJoin(struct joinNode *jNode, struct statistic *pp){
         res->dataFormat[pos] = UNCOMPRESSED;
     }
 
+    /*
+    printf("left attrType: %d\n", jNode->leftTable->attrType[0]);              // 4
+    printf("right attrType: %d\n", jNode->rightTable->attrType[0]);            // 4
+    printf("left attrSize: %d\n", jNode->leftTable->attrSize[0]);              // 4
+    printf("right attrSize: %d\n", jNode->rightTable->attrSize[0]);            // 4
+    printf("left attrTotalSize: %d\n", jNode->leftTable->attrTotalSize[0]);    // 20
+    printf("right attrTotalSize: %d\n", jNode->rightTable->attrTotalSize[0]);  // 24
+    printf("left totalAttr: %d\n", jNode->leftTable->totalAttr);               // 3
+    printf("right totalAttr: %d\n", jNode->rightTable->totalAttr);             // 3
+    */
+
     long primaryKeySize = sizeof(int) * jNode->rightTable->tupleNum;
 
 /*
  *  build hash table on GPU
  */
-    // matrix for TCU join, FIXME: 256 will change to variable later
     int *matrix1;
     int *matrix2;
 
@@ -813,8 +826,8 @@ struct tableNode * hashJoin(struct joinNode *jNode, struct statistic *pp){
     float alpha = 2.0f;
     float beta = 2.0f;
 
-    matrix1 = (int*)calloc(256, sizeof(int));
-    matrix2 = (int*)calloc(256, sizeof(int));
+    matrix1 = (int*)calloc(MATRIX_M*MATRIX_K, sizeof(int));
+    matrix2 = (int*)calloc(MATRIX_K*MATRIX_N, sizeof(int));
     mat1_fp16 = (half*)malloc(sizeof(half) * MATRIX_M * MATRIX_K);
     mat2_fp16 = (half*)malloc(sizeof(half) * MATRIX_K * MATRIX_N);
 
@@ -828,16 +841,18 @@ struct tableNode * hashJoin(struct joinNode *jNode, struct statistic *pp){
     cudaErrCheck(cudaEventCreate(&startWMMA));
     cudaErrCheck(cudaEventCreate(&stopWMMA)); 
 
-    fill_matrix(jNode, matrix1, matrix2, MATRIX_M);
+    // fill matrix1, matrix2 from jNode by mapping inputs into 1D array
+    fill_matrix(jNode, matrix1, matrix2, MATRIX_M, 
+            jNode->leftTable->totalAttr, jNode->rightTable->totalAttr, jNode->leftTable->attrType[0], jNode->rightTable->attrType[0]);
 
     // convert to half type for wmma API
     convertIntToFp16(mat1_fp16, matrix1, MATRIX_M);
     convertIntToFp16(mat2_fp16, matrix2, MATRIX_M);
 
-    //printf("Matrix 1:\n");
-    //print_matrix(matrix1, MATRIX_M);
-    //printf("Matrix 2:\n");
-    //print_matrix(matrix2, MATRIX_M);
+    printf("Matrix 1:\n");
+    print_matrix(matrix1, MATRIX_M);
+    printf("Matrix 2:\n");
+    print_matrix(matrix2, MATRIX_M);
 
     // copy data to device
     CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&mat1_dev, MATRIX_M * MATRIX_K * sizeof(half)));

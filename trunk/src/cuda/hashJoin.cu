@@ -539,7 +539,7 @@ __global__ void static joinDim_other(int *resPsum, char * dim, int attrSize, lon
 }
 
 /* Map the table entires into matrix for tensor core to use 
- * Assum both matrix have the same dimension for now, e.g., both 16x16
+ * Assum both matrix have the same dimension and the value in INT type for now, e.g., both 16x16 dim
  */
 __host__ void static fill_matrix(struct joinNode *jNode, int * matrix1, int * matrix2, int width,
         int attr_num1, int attr_num2, int attr_type1, int attr_type2) {
@@ -560,21 +560,21 @@ __host__ void static fill_matrix(struct joinNode *jNode, int * matrix1, int * ma
     int i, j; 
     for (i = 0; i < attr_num1; i++) {
         int left_col_idx = jNode->leftTable->attrIndex[i];
-        int k = 0; // k is tupleNum of the table
+        int k = 0; // k is row-index of the table
         
         for (j = 0; j < leftTupleNum * attr_type1; j+=attr_type1) {
             
             if (left_col_idx == 0) { // match to schema's i
                 mat1_i[k] = jNode->leftTable->content[i][j];
-                //mat1_i[k] += jNode->leftTable->content[i][j+1];
-                //mat1_i[k] += jNode->leftTable->content[i][j+2];
-                //mat1_i[k] += jNode->leftTable->content[i][j+3];
             }
             else if (left_col_idx == 1) { // match to schema's j
                 mat1_j[k] = jNode->leftTable->content[i][j];
             }
             else { // match to schema's val
-                mat1_val[k] = jNode->leftTable->content[i][j];
+                // read 4 bytes at once because the type is int
+                int * tmp;
+                tmp = (int*)(&jNode->leftTable->content[i][j]);
+                mat1_val[k] = *tmp;
             }
             k++;
         }
@@ -583,18 +583,20 @@ __host__ void static fill_matrix(struct joinNode *jNode, int * matrix1, int * ma
     
     for (i = 0; i < attr_num2; i++) {
         int right_col_idx = jNode->rightTable->attrIndex[i];
-        int k = 0; // k is tupleNum of the table
+        int k = 0;
         
         for (j = 0; j < rightTupleNum * attr_type2; j+=attr_type2) {
             
-            if (right_col_idx == 0) { // match to schema's i
+            if (right_col_idx == 0) {
                 mat2_i[k] = jNode->rightTable->content[i][j];
             }
-            else if (right_col_idx == 1) { // match to schema's j
+            else if (right_col_idx == 1) {
                 mat2_j[k] = jNode->rightTable->content[i][j];
             }
-            else { // match to schema's val
-                mat2_val[k] = jNode->rightTable->content[i][j];
+            else {
+                int * tmp;
+                tmp = (int*)(&jNode->rightTable->content[i][j]);
+                mat2_val[k] = *tmp;
             }
             k++;
         }
@@ -849,10 +851,12 @@ struct tableNode * hashJoin(struct joinNode *jNode, struct statistic *pp){
     convertIntToFp16(mat1_fp16, matrix1, MATRIX_M);
     convertIntToFp16(mat2_fp16, matrix2, MATRIX_M);
 
+    /*
     printf("Matrix 1:\n");
     print_matrix(matrix1, MATRIX_M);
     printf("Matrix 2:\n");
     print_matrix(matrix2, MATRIX_M);
+    */
 
     // copy data to device
     CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&mat1_dev, MATRIX_M * MATRIX_K * sizeof(half)));

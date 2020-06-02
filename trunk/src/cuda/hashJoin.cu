@@ -744,7 +744,7 @@ struct tableNode * hashJoin(struct joinNode *jNode, struct statistic *pp){
     else
         grid = defaultBlock;
 
-
+/*
     // For WMMA
     dim3 gridDim;
     dim3 blockDim;
@@ -755,6 +755,7 @@ struct tableNode * hashJoin(struct joinNode *jNode, struct statistic *pp){
 
     gridDim.x = (MATRIX_M + (WMMA_M * blockDim.x / 32 - 1)) / (WMMA_M * blockDim.x / 32);
     gridDim.y = (MATRIX_N + WMMA_N * blockDim.y - 1) / (WMMA_N * blockDim.y);
+*/
 
     res = (struct tableNode*) malloc(sizeof(struct tableNode));
     CHECK_POINTER(res);
@@ -808,13 +809,17 @@ struct tableNode * hashJoin(struct joinNode *jNode, struct statistic *pp){
 /*
  *  build hash table on GPU
  */
+    
+    struct timespec tcu_start, tcu_end;
+    clock_gettime(CLOCK_REALTIME, &tcu_start);
+
     int *matrix1;
     int *matrix2;
 
     half *mat1_fp16;
     half *mat2_fp16;
 
-    /* on GPU device */
+    // on GPU device
     half *mat1_dev;
     half *mat2_dev;
     float *c;
@@ -827,6 +832,17 @@ struct tableNode * hashJoin(struct joinNode *jNode, struct statistic *pp){
     // wmma parameters
     float alpha = 2.0f;
     float beta = 2.0f;
+
+    // For WMMA
+    dim3 gridDim;
+    dim3 blockDim;
+    // blockDim.x must be a multple of warpSize
+    // 128x4 means we have 16 warps and a block computes a 64x64 output tile
+    blockDim.x = 128;
+    blockDim.y = 4;
+
+    gridDim.x = (MATRIX_M + (WMMA_M * blockDim.x / 32 - 1)) / (WMMA_M * blockDim.x / 32);
+    gridDim.y = (MATRIX_N + WMMA_N * blockDim.y - 1) / (WMMA_N * blockDim.y);
 
     matrix1 = (int*)calloc(MATRIX_M*MATRIX_K, sizeof(int));
     matrix2 = (int*)calloc(MATRIX_K*MATRIX_N, sizeof(int));
@@ -843,22 +859,27 @@ struct tableNode * hashJoin(struct joinNode *jNode, struct statistic *pp){
     cudaErrCheck(cudaEventCreate(&startWMMA));
     cudaErrCheck(cudaEventCreate(&stopWMMA)); 
 
-    // fill matrix1, matrix2 from jNode by mapping inputs into 1D array
+    // fill matrices from jNode by mapping inputs into 1D array
+    struct timespec fill_start, fill_end, convert_start, convert_end;
+    clock_gettime(CLOCK_REALTIME, &fill_start);
     fill_matrix(jNode, matrix1, matrix2, MATRIX_M, 
             jNode->leftTable->totalAttr, jNode->rightTable->totalAttr, jNode->leftTable->attrType[0], jNode->rightTable->attrType[0]);
+    clock_gettime(CLOCK_REALTIME, &fill_end);
 
+    clock_gettime(CLOCK_REALTIME, &convert_start);
     // convert to half type for wmma API
     convertIntToFp16(mat1_fp16, matrix1, MATRIX_M);
     convertIntToFp16(mat2_fp16, matrix2, MATRIX_M);
+    clock_gettime(CLOCK_REALTIME, &convert_end);
+    
+    // print matrix for debugging
+    //printf("Matrix 1:\n");
+    //print_matrix(matrix1, MATRIX_M);
+    //printf("Matrix 2:\n");
+    //print_matrix(matrix2, MATRIX_M);
+    
 
-    /*
-    printf("Matrix 1:\n");
-    print_matrix(matrix1, MATRIX_M);
-    printf("Matrix 2:\n");
-    print_matrix(matrix2, MATRIX_M);
-    */
-
-    // copy data to device
+    // copy data to device for computation
     CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&mat1_dev, MATRIX_M * MATRIX_K * sizeof(half)));
     CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&mat2_dev, MATRIX_K * MATRIX_N * sizeof(half)));
 
@@ -882,13 +903,10 @@ struct tableNode * hashJoin(struct joinNode *jNode, struct statistic *pp){
     wmma_example <<< gridDim, blockDim >>> (mat1_dev, mat2_dev, c_wmma, MATRIX_M, MATRIX_N, MATRIX_K, alpha, beta); 
     cudaErrCheck(cudaEventRecord(stopWMMA));    
 
-
     // Copy result back to the host for error checking
     cudaErrCheck(cudaMemcpy(c_host_wmma, c_wmma, MATRIX_M * MATRIX_N * sizeof(float), cudaMemcpyDeviceToHost));
 
-
     // print error checking, cublasGemmEx and cublas
-
 
     // print time
     float wmmaTime;
@@ -910,6 +928,17 @@ struct tableNode * hashJoin(struct joinNode *jNode, struct statistic *pp){
     free(matrix1);
     free(matrix2);
     free(c_host_wmma);
+
+    clock_gettime(CLOCK_REALTIME, &tcu_end);
+    double tcu_fill = (fill_end.tv_sec -  fill_start.tv_sec)* BILLION + fill_end.tv_nsec - fill_start.tv_nsec;
+    double tcu_convert = (convert_end.tv_sec -  convert_start.tv_sec)* BILLION + convert_end.tv_nsec - convert_start.tv_nsec;
+    double tcu_elapse = (tcu_end.tv_sec -  tcu_start.tv_sec)* BILLION + tcu_end.tv_nsec - tcu_start.tv_nsec;
+    printf("fill matrices Time: %lf\n", tcu_fill/(1000*1000));
+    printf("convert type Time: %lf\n", tcu_convert/(1000*1000));
+    printf("TCU version HashJoin Time: %lf\n", tcu_elapse/(1000*1000));
+
+
+    // YDB hashJoin below this point
 
     int *gpu_psum1 = NULL;
 

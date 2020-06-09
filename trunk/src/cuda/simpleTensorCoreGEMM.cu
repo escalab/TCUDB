@@ -365,6 +365,7 @@ int main(int argc, char* argv[]) {
    cudaErrCheck(cudaMemcpy(c_cublas, c, MATRIX_M * MATRIX_N * sizeof(float), cudaMemcpyDeviceToDevice));
    cudaErrCheck(cudaMemcpy(c_cublas_gemmEx, c, MATRIX_M * MATRIX_N * sizeof(float), cudaMemcpyDeviceToDevice));
    cudaErrCheck(cudaMemcpy(c_wmma, c, MATRIX_M * MATRIX_N * sizeof(float), cudaMemcpyDeviceToDevice));
+   cudaErrCheck(cudaMemcpy(c_sgemm, c, MATRIX_M * MATRIX_N * sizeof(float), cudaMemcpyDeviceToDevice));
 
 
 
@@ -406,7 +407,7 @@ int main(int argc, char* argv[]) {
                 b_fp16, CUDA_R_16F, MATRIX_K,
                 &beta, 
                 c_cublas_gemmEx, CUDA_R_32F, MATRIX_M,
-                CUDA_R_32F, CUBLAS_GEMM_DFALT));
+                CUDA_R_32F, CUBLAS_GEMM_DFALT)); // default
    cudaErrCheck(cudaEventRecord(stopcublasCublasGemmEx));
 
 //   cublasErrCheck(cublasSetMathMode(cublasHandle, CUBLAS_TENSOR_OP_MATH));
@@ -421,14 +422,14 @@ int main(int argc, char* argv[]) {
                 b_fp16, CUDA_R_16F, MATRIX_K,
                 &beta, 
                 c_cublas, CUDA_R_32F, MATRIX_M,
-                CUDA_R_32F, CUBLAS_GEMM_DFALT_TENSOR_OP));
+                CUDA_R_32F, CUBLAS_GEMM_DFALT_TENSOR_OP)); // tcu
    cudaErrCheck(cudaEventRecord(stopcublasEX));
 
    // Error checking
    cudaErrCheck(cudaMemcpy(c_host_wmma, c_wmma, MATRIX_M * MATRIX_N * sizeof(float), cudaMemcpyDeviceToHost));
    cudaErrCheck(cudaMemcpy(c_host_cublas, c_cublas, MATRIX_M * MATRIX_N * sizeof(float), cudaMemcpyDeviceToHost));
    cudaErrCheck(cudaMemcpy(c_host_cublasCublasGemmEx, c_cublas_gemmEx, MATRIX_M * MATRIX_N * sizeof(float), cudaMemcpyDeviceToHost));
-   cudaErrCheck(cudaMemcpy(c_host_sgemm, c_cublas_gemmEx, MATRIX_M * MATRIX_N * sizeof(float), cudaMemcpyDeviceToHost));
+   cudaErrCheck(cudaMemcpy(c_host_sgemm, c_sgemm, MATRIX_M * MATRIX_N * sizeof(float), cudaMemcpyDeviceToHost));
 
    // only compare result need to cudaMemcpy to copy data back to CPU
    printf("\nChecking results with cublas (cublasGemmEx)...\n");
@@ -497,6 +498,8 @@ int main(int argc, char* argv[]) {
    cudaErrCheck(cudaFree(c));
    cudaErrCheck(cudaFree(c_cublas));
    cudaErrCheck(cudaFree(c_wmma));
+   cudaErrCheck(cudaFree(c_cublas_gemmEx)); 
+   cudaErrCheck(cudaFree(c_sgemm)); 
    
    free(c_host_cublas);
    free(c_host_wmma);

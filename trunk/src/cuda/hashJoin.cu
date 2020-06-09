@@ -844,7 +844,7 @@ struct tableNode * hashJoin(struct joinNode *jNode, struct statistic *pp){
     struct timespec tcu_start, tcu_end;
     struct timespec init_start, init_end;
     clock_gettime(CLOCK_REALTIME, &tcu_start);
-    clock_gettime(CLOCK_REALTIME, &init_start);
+    //clock_gettime(CLOCK_REALTIME, &init_start);
 
     int *matrix1;
     int *matrix2;
@@ -894,6 +894,7 @@ struct tableNode * hashJoin(struct joinNode *jNode, struct statistic *pp){
     mat1_fp32 = (float*)malloc(sizeof(float) * MATRIX_M * MATRIX_K);
     mat2_fp32 = (float*)malloc(sizeof(float) * MATRIX_K * MATRIX_N);
 
+    clock_gettime(CLOCK_REALTIME, &init_start);
     //curandGenerator_t gen;
     cublasHandle_t cublasHandle;         // tcu
     cublasHandle_t cublasHandle_default; // cublas
@@ -923,11 +924,12 @@ struct tableNode * hashJoin(struct joinNode *jNode, struct statistic *pp){
     cublasErrCheck(cublasSetMathMode(cublasHandle, CUBLAS_TENSOR_OP_MATH));
     cublasErrCheck(cublasSetMathMode(cublasHandle_default, CUBLAS_DEFAULT_MATH));
 
+    clock_gettime(CLOCK_REALTIME, &init_end);
     c_host_wmma = (float*)malloc(MATRIX_M * MATRIX_N * sizeof(float));
     c_host_cublas = (float*)malloc(MATRIX_M * MATRIX_N * sizeof(float));
     c_host_sgemm = (float*)malloc(MATRIX_M * MATRIX_N * sizeof(float));
 
-    clock_gettime(CLOCK_REALTIME, &init_end);
+    //clock_gettime(CLOCK_REALTIME, &init_end);
 
     // fill matrices from jNode by mapping inputs into 1D array
     struct timespec fill_start, fill_end, convert_start, convert_end;

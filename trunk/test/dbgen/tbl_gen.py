@@ -3,20 +3,20 @@ from scipy.sparse import coo_matrix
 import argparse
 
 parser = argparse.ArgumentParser(description='Generate two NxN tables for TCUDB.')
-parser.add_argument('--dim', default='16', type=int, help='dimension of the table')
-parser.add_argument('--tbl1', default='large_mat1.tbl', help='first output table')
-parser.add_argument('--tbl2', default='large_mat2.tbl', help='second output table')
+parser.add_argument('--dim', default='4096', type=int, help='dimension of the table')
+parser.add_argument('--tbl1', default='huge_mat1.tbl', help='first output table')
+parser.add_argument('--tbl2', default='huge_mat2.tbl', help='second output table')
 
 args = parser.parse_args()
 global MAT1, MAT2
 
 # create two 2D representation of the matrix
-rand_max = pow(2, 14) # threshold of max value
+rand_max = pow(2, 10) # threshold of max value
 MAT1 = np.random.randint(0, rand_max, (args.dim, args.dim))
 MAT2 = np.random.randint(0, rand_max, (args.dim, args.dim))
 
 # randomly replace 3 elements in each row to zero
-def replace2Zero(mat, how_many_to_zero=3):
+def replace2Zero(mat, how_many_to_zero=768):
     for row in mat:
         indices = np.random.choice(np.arange(row.size), replace=False, size=int(how_many_to_zero))
         row[indices] = 0

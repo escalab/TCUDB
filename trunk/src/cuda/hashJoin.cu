@@ -861,14 +861,14 @@ struct tableNode * hashJoin(struct joinNode *jNode, struct statistic *pp){
     float *mat2_dev_fp32;
     float *c;
 
-    float *c_wmma;
+    //float *c_wmma;
     float *c_cublas;
-    float *c_sgemm; // single precision
+    //float *c_sgemm; // single precision
 
     // for error checking
-    float *c_host_wmma;
+    //float *c_host_wmma;
     float *c_host_cublas;
-    float *c_host_sgemm;
+    //float *c_host_sgemm;
 
     // wmma parameters
     // C = alpha*A*B + beta*C  
@@ -897,37 +897,34 @@ struct tableNode * hashJoin(struct joinNode *jNode, struct statistic *pp){
     clock_gettime(CLOCK_REALTIME, &init_start);
     //curandGenerator_t gen;
     cublasHandle_t cublasHandle;         // tcu
-    cublasHandle_t cublasHandle_default; // cublas
+    //cublasHandle_t cublasHandle_default; // cublas
 
-    //curandErrCheck(curandCreateGenerator(&gen, CURAND_RNG_PSEUDO_DEFAULT));
-    //curandErrCheck(curandSetPseudoRandomGeneratorSeed(gen, 2020ULL));
-
-    cudaEvent_t startWMMA;
-    cudaEvent_t stopWMMA;
+    //cudaEvent_t startWMMA;
+    //cudaEvent_t stopWMMA;
     cudaEvent_t startcublasEX;
     cudaEvent_t stopcublasEX;
-    cudaEvent_t startcublas; // for sgemm
-    cudaEvent_t stopcublas;
+    //cudaEvent_t startcublas; // for sgemm
+    //cudaEvent_t stopcublas;
 
-    cudaErrCheck(cudaEventCreate(&startWMMA));
-    cudaErrCheck(cudaEventCreate(&stopWMMA)); 
+    //cudaErrCheck(cudaEventCreate(&startWMMA));
+    //cudaErrCheck(cudaEventCreate(&stopWMMA)); 
     cudaErrCheck(cudaEventCreate(&startcublasEX));
     cudaErrCheck(cudaEventCreate(&stopcublasEX));
-    cudaErrCheck(cudaEventCreate(&startcublas));
-    cudaErrCheck(cudaEventCreate(&stopcublas));
+    //cudaErrCheck(cudaEventCreate(&startcublas));
+    //cudaErrCheck(cudaEventCreate(&stopcublas));
 
     // use tensor core or cublas
     cublasErrCheck(cublasCreate(&cublasHandle));
-    cublasErrCheck(cublasCreate(&cublasHandle_default));
+    //cublasErrCheck(cublasCreate(&cublasHandle_default));
 
     // enable tensor core
     cublasErrCheck(cublasSetMathMode(cublasHandle, CUBLAS_TENSOR_OP_MATH));
-    cublasErrCheck(cublasSetMathMode(cublasHandle_default, CUBLAS_DEFAULT_MATH));
+    //cublasErrCheck(cublasSetMathMode(cublasHandle_default, CUBLAS_DEFAULT_MATH));
 
     clock_gettime(CLOCK_REALTIME, &init_end);
-    c_host_wmma = (float*)malloc(MATRIX_M * MATRIX_N * sizeof(float));
+    //c_host_wmma = (float*)malloc(MATRIX_M * MATRIX_N * sizeof(float));
     c_host_cublas = (float*)malloc(MATRIX_M * MATRIX_N * sizeof(float));
-    c_host_sgemm = (float*)malloc(MATRIX_M * MATRIX_N * sizeof(float));
+    //c_host_sgemm = (float*)malloc(MATRIX_M * MATRIX_N * sizeof(float));
 
     //clock_gettime(CLOCK_REALTIME, &init_end);
 
@@ -944,10 +941,6 @@ struct tableNode * hashJoin(struct joinNode *jNode, struct statistic *pp){
     // convert to half type for wmma API
     convertIntToFp32(mat1_fp32, matrix1, MATRIX_M);
     convertIntToFp32(mat2_fp32, matrix2, MATRIX_N);
-    //convertFp32ToFp16<<< (MATRIX_M * MATRIX_K + 255) / 256, 256 >>> (mat1_fp16, mat1_fp32, MATRIX_M * MATRIX_K);
-    //convertFp32ToFp16<<< (MATRIX_K * MATRIX_N + 255) / 256, 256 >>> (mat2_fp16, mat2_fp32, MATRIX_K * MATRIX_N);
-    //convertFp32ToFp16(mat1_fp16, mat1_fp32, MATRIX_M);
-    //convertFp32ToFp16(mat2_fp16, mat2_fp32, MATRIX_N);
     clock_gettime(CLOCK_REALTIME, &convert_end);
     
     // print matrix for debugging
@@ -965,20 +958,15 @@ struct tableNode * hashJoin(struct joinNode *jNode, struct statistic *pp){
     cudaErrCheck(cudaMalloc((void**)&mat2_dev_fp32, MATRIX_K * MATRIX_N * sizeof(float)));
 
     cudaErrCheck(cudaMalloc((void**)&c, MATRIX_M * MATRIX_N * sizeof(float)));
-    //cudaErrCheck(cudaMemset(c, 0, MATRIX_M * MATRIX_N * sizeof(float)));
-    cudaErrCheck(cudaMalloc((void**)&c_wmma, MATRIX_M * MATRIX_N * sizeof(float)));
-    //cudaErrCheck(cudaMemset(c_wmma, 0, MATRIX_M * MATRIX_N * sizeof(float)));
+
+    //cudaErrCheck(cudaMalloc((void**)&c_wmma, MATRIX_M * MATRIX_N * sizeof(float)));
     cudaErrCheck(cudaMalloc((void**)&c_cublas, MATRIX_M * MATRIX_N * sizeof(float)));
-    //cudaErrCheck(cudaMemset(c_cublas, 0, MATRIX_M * MATRIX_N * sizeof(float)));
-    cudaErrCheck(cudaMalloc((void**)&c_sgemm, MATRIX_M * MATRIX_N * sizeof(float)));
-    //cudaErrCheck(cudaMemset(c_sgemm, 0, MATRIX_M * MATRIX_N * sizeof(float)));
+    //cudaErrCheck(cudaMalloc((void**)&c_sgemm, MATRIX_M * MATRIX_N * sizeof(float)));
 
     //c_host_wmma = (float*)malloc(MATRIX_M * MATRIX_N * sizeof(float));
-    //c_host_cublas = (float*)malloc(MATRIX_M * MATRIX_N * sizeof(float));
+    c_host_cublas = (float*)malloc(MATRIX_M * MATRIX_N * sizeof(float));
     //c_host_sgemm = (float*)malloc(MATRIX_M * MATRIX_N * sizeof(float));
 
-    //cudaErrCheck(cudaMemcpy(mat1_dev, mat1_fp16, sizeof(half) * MATRIX_M * MATRIX_K, cudaMemcpyHostToDevice));
-    //cudaErrCheck(cudaMemcpy(mat2_dev, mat2_fp16, sizeof(half) * MATRIX_K * MATRIX_N, cudaMemcpyHostToDevice));
     cudaErrCheck(cudaMemcpy(mat1_dev_fp32, mat1_fp32, sizeof(float) * MATRIX_M * MATRIX_K, cudaMemcpyHostToDevice));
     cudaErrCheck(cudaMemcpy(mat2_dev_fp32, mat2_fp32, sizeof(float) * MATRIX_K * MATRIX_N, cudaMemcpyHostToDevice));
     convertFp32ToFp16<<< (MATRIX_M * MATRIX_K + 255) / 256, 256 >>> (mat1_dev, mat1_dev_fp32, MATRIX_M * MATRIX_K);
@@ -987,36 +975,22 @@ struct tableNode * hashJoin(struct joinNode *jNode, struct statistic *pp){
     cudaErrCheck(cudaMemcpy(mat2_fp16, mat2_dev, sizeof(half) * MATRIX_K * MATRIX_N, cudaMemcpyDeviceToHost));
     clock_gettime(CLOCK_REALTIME, &cuMemcpy_end);
 
-    //diff_mat(mat1_fp32, mat1_fp16, MATRIX_M);
-    //printf("\n");
-    //diff_mat(mat2_fp32, mat2_fp16, MATRIX_N);
-    
-    //printf("Matrix 1 Fp16:\n");
-    //print_matrix(mat1_fp16, MATRIX_M);
-    //printf("Matrix 2 Fp16:\n");
-    //print_matrix(mat2_fp16, MATRIX_M);
-    
-
-    // create data for result matrix directly on device
-    //curandErrCheck(curandGenerateUniform(gen, c, MATRIX_M * MATRIX_N));
-    //curandErrCheck(curandDestroyGenerator(gen));
-
-    //cudaErrCheck(cudaMemcpy(c_wmma, c, sizeof(float) * MATRIX_M * MATRIX_N, cudaMemcpyDeviceToDevice));
-    //cudaErrCheck(cudaMemcpy(c_cublas, c, MATRIX_M * MATRIX_N * sizeof(float), cudaMemcpyDeviceToDevice));
-    //cudaErrCheck(cudaMemcpy(c_sgemm, c, MATRIX_M * MATRIX_N * sizeof(float), cudaMemcpyDeviceToDevice));
-
     printf("\nM = %d, N = %d, K = %d. alpha = %f, beta = %f\n\n", MATRIX_M, MATRIX_N, MATRIX_K, alpha, beta);
 
-    printf("Running with wmma...\n");
-    cudaErrCheck(cudaEventRecord(startWMMA));
-    wmma_example <<< gridDim, blockDim >>> (mat1_dev, mat2_dev, c_wmma, MATRIX_M, MATRIX_N, MATRIX_K, alpha, beta); 
-    cudaErrCheck(cudaEventRecord(stopWMMA));
-
+    
+    //printf("Running with wmma...\n");
+    //cudaErrCheck(cudaEventRecord(startWMMA));
+    //wmma_example <<< gridDim, blockDim >>> (mat1_dev, mat2_dev, c_wmma, MATRIX_M, MATRIX_N, MATRIX_K, alpha, beta); 
+    //cudaErrCheck(cudaEventRecord(stopWMMA));
+    
+    /*
     printf("Running with sgemm...\n");
     cudaErrCheck(cudaEventRecord(startcublas));
     cublasSgemm(cublasHandle_default, CUBLAS_OP_N, CUBLAS_OP_N, MATRIX_M, MATRIX_N, MATRIX_K, &alpha, mat1_dev_fp32, MATRIX_M, mat2_dev_fp32, MATRIX_N, &beta, c_sgemm, MATRIX_K);
     cudaErrCheck(cudaEventRecord(stopcublas));
+    */
 
+    
     printf("Running with cuBLAS on TCUs...\n");
     cudaErrCheck(cudaEventRecord(startcublasEX));
     cublasErrCheck(cublasGemmEx(cublasHandle, CUBLAS_OP_N, CUBLAS_OP_N,
@@ -1028,17 +1002,19 @@ struct tableNode * hashJoin(struct joinNode *jNode, struct statistic *pp){
                 c_cublas, CUDA_R_32F, MATRIX_M,
                 CUDA_R_32F, CUBLAS_GEMM_DFALT_TENSOR_OP)); // tcu
     cudaErrCheck(cudaEventRecord(stopcublasEX));
+    
 
     struct timespec chkRes_start, chkRes_end;
     clock_gettime(CLOCK_REALTIME,&chkRes_start);
     // Copy result back to the host for error checking
-    cudaErrCheck(cudaMemcpy(c_host_wmma, c_wmma, MATRIX_M * MATRIX_N * sizeof(float), cudaMemcpyDeviceToHost));
+    //cudaErrCheck(cudaMemcpy(c_host_wmma, c_wmma, MATRIX_M * MATRIX_N * sizeof(float), cudaMemcpyDeviceToHost));
     cudaErrCheck(cudaMemcpy(c_host_cublas, c_cublas, MATRIX_M * MATRIX_N * sizeof(float), cudaMemcpyDeviceToHost));
-    cudaErrCheck(cudaMemcpy(c_host_sgemm, c_sgemm, MATRIX_M * MATRIX_N * sizeof(float), cudaMemcpyDeviceToHost));
+    //cudaErrCheck(cudaMemcpy(c_host_sgemm, c_sgemm, MATRIX_M * MATRIX_N * sizeof(float), cudaMemcpyDeviceToHost));
 
     // print error checking, cublasGemmEx and cublas
     printf("\nChecking results with tensor cores...\n");
     // 0.01% relative tolerance. 1e-5 absolute tolerance.
+    /*
     int errors = 0;
     for (int i = 0; i < MATRIX_M * MATRIX_N; i++) {
         float v1 = c_host_sgemm[i];
@@ -1054,34 +1030,37 @@ struct tableNode * hashJoin(struct joinNode *jNode, struct statistic *pp){
     if (errors > 0) {
         printf("WMMA does not agree with cuBLAS! %d errors!\n", errors);
     }
+    */
     clock_gettime(CLOCK_REALTIME,&chkRes_end);
 
     // print time
     float wmmaTime;
     float cublasTime;
 
-    cudaErrCheck(cudaEventSynchronize(stopWMMA));
-    cudaErrCheck(cudaEventSynchronize(stopcublasEX));
-    cudaErrCheck(cudaEventElapsedTime(&wmmaTime, startWMMA, stopWMMA));
-    cudaErrCheck(cudaEventElapsedTime(&cublasTime, startcublas, stopcublas));
+    //cudaErrCheck(cudaEventSynchronize(stopWMMA));
+    //cudaErrCheck(cudaEventSynchronize(stopcublasEX));
+    //cudaErrCheck(cudaEventElapsedTime(&wmmaTime, startWMMA, stopWMMA));
+    //cudaErrCheck(cudaEventElapsedTime(&cublasTime, startcublas, stopcublas));
 
-    printf("wmma took %fms\n", wmmaTime);
-    printf("cublas (FP32) took %fms\n", cublasTime);
+    //printf("wmma took %fms\n", wmmaTime);
+    //printf("cublas (FP32) took %fms\n", cublasTime);
     cudaErrCheck(cudaEventElapsedTime(&cublasTime, startcublasEX, stopcublasEX));
     printf("cublas tensor cores (FP16) took %fms\n", cublasTime);
 
     // free those data structures
-    cudaErrCheck(cudaEventDestroy(startWMMA));
-    cudaErrCheck(cudaEventDestroy(stopWMMA));
+    //cudaErrCheck(cudaEventDestroy(startWMMA));
+    //cudaErrCheck(cudaEventDestroy(stopWMMA));
     cudaErrCheck(cudaEventDestroy(startcublasEX));
     cudaErrCheck(cudaEventDestroy(stopcublasEX));
+    //cudaErrCheck(cudaEventDestroy(startcublas));
+    //cudaErrCheck(cudaEventDestroy(stopcublas));
 
     cudaErrCheck(cudaFree(mat1_dev));
     cudaErrCheck(cudaFree(mat2_dev));
     cudaErrCheck(cudaFree(c));
-    cudaErrCheck(cudaFree(c_wmma));
+    //cudaErrCheck(cudaFree(c_wmma));
     cudaErrCheck(cudaFree(c_cublas));
-    cudaErrCheck(cudaFree(c_sgemm));
+    //cudaErrCheck(cudaFree(c_sgemm));
 
     free(matrix1);
     free(matrix2);
@@ -1089,9 +1068,9 @@ struct tableNode * hashJoin(struct joinNode *jNode, struct statistic *pp){
     free(mat2_fp16);
     free(mat1_fp32);
     free(mat2_fp32);
-    free(c_host_wmma);
+    //free(c_host_wmma);
     free(c_host_cublas);
-    free(c_host_sgemm);
+    //free(c_host_sgemm);
 
     clock_gettime(CLOCK_REALTIME, &tcu_end);
     double tcu_fill = (fill_end.tv_sec -  fill_start.tv_sec)* BILLION + fill_end.tv_nsec - fill_start.tv_nsec;

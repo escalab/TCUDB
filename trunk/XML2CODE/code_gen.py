@@ -465,6 +465,9 @@ def get_tables(tree, joinAttr, aggNode, orderbyNode):
                         newExp = ystree.__trace_to_leaf__(tree,exp,False)
                         leftIndex.append(newExp.column_name)
 
+                    elif joinType == 2: # TCU join
+                        leftIndex.append(exp.column_name)
+
                     leftAttr.append(colAttr)
                     leftPos.append(index)
 
@@ -476,6 +479,9 @@ def get_tables(tree, joinAttr, aggNode, orderbyNode):
                     elif joinType == 1:
                         newExp = ystree.__trace_to_leaf__(tree,exp,False)
                         rightIndex.append(newExp.column_name)
+
+                    elif joinType == 2:
+                        rightIndex.append(exp.column_name)
 
                     rightAttr.append(colAttr)
                     rightPos.append(index)
@@ -518,6 +524,20 @@ def get_tables(tree, joinAttr, aggNode, orderbyNode):
             for exp in pkList[0]:
                 newExp = ystree.__trace_to_leaf__(tree,exp,True)
                 colIndex = newExp.column_name
+
+        elif joinType == 2:
+            for exp in pkList[0]:
+                colIndex = 0
+                if isinstance(tree.left_child, ystree.TableNode):
+                    colIndex = -1
+                    for tmp in tree.left_child.select_list.tmp_exp_list:
+                        if exp.column_name == tmp.column_name:
+                            colIndex = tree.left_child.select_list.tmp_exp_list.index(tmp)
+                            break
+                    if colIndex == -1:
+                        print 1/0
+                else:
+                    colIndex = exp.column_name
 
         joinAttr.factIndex.insert(0, colIndex)
 
@@ -720,6 +740,7 @@ Several configurable variables (in config.py):
 
     @joinType determines whether we should generate invisible joins for star
     schema queries. 0 represents normal join and 1 represents invisible join.
+    UPDATE: 2 represents TCU join using NVIDIA's WMMA library.
     
     @POS describes where the data are stored in the host memory and how the
     codes should be generated. 0 means data are stored in pageable host
@@ -745,7 +766,7 @@ def generate_code(tree):
         print "Error! The value of POS can only be 0,1,2,3."
         exit(-1)
 
-    if joinType not in [0,1]:
+    if joinType not in [0,1,2]:
         print "Error! The value of JOINTYPE can only be 0 or 1."
         exit(-1)
 
@@ -788,8 +809,10 @@ def generate_code(tree):
 
     if joinType == 0:
         print >>fo, "#include \"../include/hashJoin.h\""
-    else:
+    elif joinType == 1:
         print >>fo, "#include \"../include/inviJoin.h\""
+    else: # joinType == 2
+        print >>fo, "#include \"../include/tcuJoin.h\""
 
     print >>fo, "#include \"../include/schema.h\""
 
@@ -800,11 +823,16 @@ def generate_code(tree):
         print >>fo, "extern struct tableNode* tableScan(struct scanNode *,struct statistic *);"
         if joinType == 0:
             print >>fo, "extern struct tableNode* hashJoin(struct joinNode *, struct statistic *);"
-        else:
+            print >>fo, "extern struct tableNode* groupBy(struct groupByNode *,struct statistic *);"
+            print >>fo, "extern struct tableNode* orderBy(struct orderByNode *, struct statistic *);"
+            print >>fo, "extern char* materializeCol(struct materializeNode * mn, struct statistic *);"
+        elif joinType == 1:
             print >>fo, "extern struct tableNode* inviJoin(struct joinNode *, struct statistic *);"
-        print >>fo, "extern struct tableNode* groupBy(struct groupByNode *,struct statistic *);"
-        print >>fo, "extern struct tableNode* orderBy(struct orderByNode *, struct statistic *);"
-        print >>fo, "extern char* materializeCol(struct materializeNode * mn, struct statistic *);"
+            print >>fo, "extern struct tableNode* groupBy(struct groupByNode *,struct statistic *);"
+            print >>fo, "extern struct tableNode* orderBy(struct orderByNode *, struct statistic *);"
+            print >>fo, "extern char* materializeCol(struct materializeNode * mn, struct statistic *);"
+        else: # joinType == 2
+            print >>fo, "extern struct tableNode* tcuJoin(struct joinNode *, struct statistic *);"
 
     else:              
         print >>fo, "#include <CL/cl.h>"
@@ -1987,158 +2015,558 @@ def generate_code(tree):
 
         print >>fo, "\t}\n"
 
-
-    if len(aggNode) >0 :
+    elif joinType == 2:
         """
-        Generate codes for aggregation node.
+        Generate the codes for tcu joins.
+        0 represents normal hash join, 1 represents invisible join, and 2 represents tcu join.
         """
 
-        gb_exp_list = aggNode[0].group_by_clause.groupby_exp_list
-        select_list = aggNode[0].select_list.tmp_exp_list
-        selectLen = len(select_list)
-        gbLen = len(gb_exp_list)
-        print >>fo, "\tstruct groupByNode * gbNode = (struct groupByNode *) malloc(sizeof(struct groupByNode));"
-        print >>fo, "\tCHECK_POINTER(gbNode);"
-        print >>fo, "\tgbNode->table = " +resultNode +";"
-        print >>fo, "\tgbNode->groupByColNum = " + str(gbLen) + ";"
-        print >>fo, "\tgbNode->groupByIndex = (int *)malloc(sizeof(int) * " + str(gbLen) + ");"
-        print >>fo, "\tCHECK_POINTER(gbNode->groupByIndex);"
-        print >>fo, "\tgbNode->groupByType = (int *)malloc(sizeof(int) * " + str(gbLen) + ");"
-        print >>fo, "\tCHECK_POINTER(gbNode->groupByType);"
-        print >>fo, "\tgbNode->groupBySize = (int *)malloc(sizeof(int) * " + str(gbLen) + ");"
-        print >>fo, "\tCHECK_POINTER(gbNode->groupBySize);"
+        selectOnly = len(joinAttr.dimTables) == 0
+        hasWhere = 0
+        factName = joinAttr.factTables[0].table_name.lower() + "Table"
+        resName = joinAttr.factTables[0].table_name.lower() + "Res"
+        setTupleNum = 0
 
-        for i in range(0,gbLen):
-            exp = gb_exp_list[i]
-            if isinstance(exp, ystree.YRawColExp):
-                print >>fo, "\tgbNode->groupByIndex[" + str(i) + "] = " + str(exp.column_name) + ";"
-                print >>fo, "\tgbNode->groupByType[" + str(i) + "] = gbNode->table->attrType[" + str(exp.column_name) + "];" 
-                print >>fo, "\tgbNode->groupBySize[" + str(i) + "] = gbNode->table->attrSize[" + str(exp.column_name) + "];" 
-            elif isinstance(exp, ystree.YConsExp):
-                print >>fo, "\tgbNode->groupByIndex[" + str(i) + "] = -1;" 
-                print >>fo, "\tgbNode->groupByType[" + str(i) + "] = INT;" 
-                print >>fo, "\tgbNode->groupBySize[" + str(i) + "] = sizeof(int);" 
-            else:
+        selectList = joinAttr.factTables[0].select_list.tmp_exp_list
+
+        indexList = []
+        colList = []
+        generate_col_list(joinAttr.factTables[0],indexList,colList)
+        totalAttr = len(indexList)
+
+        for i in range(0,totalAttr):
+            col = colList[i] 
+            if isinstance(col, ystree.YRawColExp):
+                colType = col.column_type
+                colIndex = col.column_name
+                ctype = to_ctype(colType)
+                colLen = type_length(joinAttr.factTables[0].table_name, colIndex, colType)
+            elif isinstance(col, ystree.YConsExp):
+                colType = col.cons_type
+                ctype = to_ctype(colType)
+                if cons_type == "INTEGER":
+                    colLen = "sizeof(int)"
+                elif cons_type == "FLOAT":
+                    colLen = "sizeof(float)"
+                else:
+                    colLen = str(len(col.cons_value))
+            elif isinstance(col, ystree.YFuncExp):
                 print 1/0
 
-        print >>fo, "\tgbNode->outputAttrNum = " + str(selectLen) + ";"
-        print >>fo, "\tgbNode->attrType = (int *) malloc(sizeof(int) *" + str(selectLen) + ");"
-        print >>fo, "\tCHECK_POINTER(gbNode->attrType);"
-        print >>fo, "\tgbNode->attrSize = (int *) malloc(sizeof(int) *" + str(selectLen) + ");"
-        print >>fo, "\tCHECK_POINTER(gbNode->attrSize);"
-        print >>fo, "\tgbNode->tupleSize = 0;"
-        print >>fo, "\tgbNode->gbExp = (struct groupByExp *) malloc(sizeof(struct groupByExp) * " + str(selectLen) + ");"
-        print >>fo, "\tCHECK_POINTER(gbNode->gbExp);"
+            if setTupleNum == 0:
+                setTupleNum = 1
+                print >>fo, "\toutFd = open(\"" + joinAttr.factTables[0].table_name + str(colIndex) + "\",O_RDONLY);"
+                print >>fo, "\tread(outFd, &header, sizeof(struct columnHeader));"
+                print >>fo, "\tblockTotal = header.blockTotal;"
+                print >>fo, "\tclose(outFd);"
+                break
 
-        for i in range(0,selectLen):
-            exp = select_list[i]
-            if isinstance(exp, ystree.YFuncExp):
+        print >>fo, "\toffset = 0;"
+        print >>fo, "\tlong blockSize["+str(totalAttr) + "];"
+        print >>fo, "\tfor(int i=0;i<" + str(totalAttr) + ";i++)"
+        print >>fo, "\t\tblockSize[i] = 0;"
+        print >>fo, "\tfor(int i=0;i<blockTotal;i++){\n"
 
-                print >>fo, "\tgbNode->tupleSize += sizeof(float);"
-                print >>fo, "\tgbNode->attrType[" + str(i) + "] = FLOAT;"
-                print >>fo, "\tgbNode->attrSize[" + str(i) + "] = sizeof(float);"
-                print >>fo, "\tgbNode->gbExp["+str(i)+"].func = " + exp.func_name + ";"
-                para = exp.parameter_list[0]
-                mathFunc = mathExp()
-                mathFunc.addOp(para)
-                prefix = "\tgbNode->gbExp[" + str(i) + "].exp"
-                printMathFunc(fo,prefix, mathFunc)
+        print >>fo, "\t\tstruct tableNode *" + factName + " = (struct tableNode*)malloc(sizeof(struct tableNode));" 
+        print >>fo, "\t\tCHECK_POINTER(" + factName + ");"
+        print >>fo, "\t\t" + factName + "->totalAttr = " + str(totalAttr) + ";"
+        print >>fo, "\t\t" + factName + "->attrType = (int *) malloc(sizeof(int)*" + str(totalAttr) + ");"
+        print >>fo, "\t\tCHECK_POINTER(" + factName + "->attrType);"
+        print >>fo, "\t\t" + factName + "->attrSize = (int *) malloc(sizeof(int)*" + str(totalAttr) + ");"
+        print >>fo, "\t\tCHECK_POINTER(" + factName + "->attrSize);"
+        print >>fo, "\t\t" + factName + "->attrIndex = (int *) malloc(sizeof(int)*" + str(totalAttr) + ");"
+        print >>fo, "\t\tCHECK_POINTER(" + factName + "->attrIndex);"
+        print >>fo, "\t\t" + factName + "->attrTotalSize = (int *) malloc(sizeof(int)*" + str(totalAttr) + ");"
+        print >>fo, "\t\tCHECK_POINTER(" + factName + "->attrTotalSize);"
+        print >>fo, "\t\t" + factName + "->dataPos = (int *) malloc(sizeof(int)*" + str(totalAttr) + ");"
+        print >>fo, "\t\tCHECK_POINTER(" + factName + "->dataPos);"
+        print >>fo, "\t\t" + factName + "->dataFormat = (int *) malloc(sizeof(int)*" + str(totalAttr) + ");"
+        print >>fo, "\t\tCHECK_POINTER(" + factName + "->dataFormat);"
+        print >>fo, "\t\t" + factName + "->content = (char **) malloc(sizeof(char *)*" + str(totalAttr) + ");"
+        print >>fo, "\t\tCHECK_POINTER(" + factName + "->content);"
 
-            elif isinstance(exp, ystree.YRawColExp):
-                colIndex = exp.column_name
-                print >>fo, "\tgbNode->attrType[" + str(i) + "] = " + resultNode + "->attrType[" + str(colIndex) + "];"
-                print >>fo, "\tgbNode->attrSize[" + str(i) + "] = " + resultNode + "->attrSize[" + str(colIndex) + "];"
-                print >>fo, "\tgbNode->tupleSize += "+resultNode + "->attrSize[" + str(colIndex) + "];"
-                print >>fo, "\tgbNode->gbExp[" + str(i) + "].func = NOOP;"
-                print >>fo, "\tgbNode->gbExp[" + str(i) + "].exp.op = NOOP;"
-                print >>fo, "\tgbNode->gbExp[" + str(i) + "].exp.exp = NULL;"
-                print >>fo, "\tgbNode->gbExp[" + str(i) + "].exp.opNum = 1;"
-                print >>fo, "\tgbNode->gbExp[" + str(i) + "].exp.opType = COLUMN;"
-                print >>fo, "\tgbNode->gbExp[" + str(i) + "].exp.opValue = " + str(exp.column_name) + ";"
+        tupleSize = "0"
+        for i in range(0,totalAttr):
+            col = colList[i] 
+            if isinstance(col, ystree.YRawColExp):
+                colType = col.column_type
+                colIndex = col.column_name
+                ctype = to_ctype(colType)
+                colLen = type_length(joinAttr.factTables[0].table_name, colIndex, colType)
+            elif isinstance(col, ystree.YConsExp):
+                colType = col.cons_type
+                ctype = to_ctype(colType)
+                if cons_type == "INTEGER":
+                    colLen = "sizeof(int)"
+                elif cons_type == "FLOAT":
+                    colLen = "sizeof(float)"
+                else:
+                    colLen = str(len(col.cons_value))
+            elif isinstance(col, ystree.YFuncExp):
+                print 1/0
+
+            tupleSize += " + " + colLen
+            print >>fo, "\t\t" + factName + "->attrType[" + str(i) + "] = " + ctype + ";"
+            print >>fo, "\t\t" + factName + "->attrSize[" + str(i) + "] = " + colLen + ";"
+            print >>fo, "\t\t" + factName + "->attrIndex[" + str(i) + "] = " + str(colIndex) + ";"
+
+            if POS == 0:
+                print >>fo, "\t\t" + factName + "->dataPos[" + str(i) + "] = MEM;"
+            elif POS == 1:
+                print >>fo, "\t\t" + factName + "->dataPos[" + str(i) + "] = PINNED;"
+            elif POS == 2:
+                print >>fo, "\t\t" + factName + "->dataPos[" + str(i) + "] = UVA;"
+            elif POS == 3:
+                print >>fo, "\t\t" + factName + "->dataPos[" + str(i) + "] = MMAP;"
+            else:
+                print >>fo, "\t\t" + factName + "->dataPos[" + str(i) + "] = MEM;"
+
+            print >>fo, "\t\toutFd = open(\"" + joinAttr.factTables[0].table_name + str(colIndex) + "\", O_RDONLY);"
+            print >>fo, "\t\toffset = i*sizeof(struct columnHeader) + blockSize[" + str(i) + "];"
+            print >>fo, "\t\tlseek(outFd,offset,SEEK_SET);"
+            print >>fo, "\t\tread(outFd, &header, sizeof(struct columnHeader));"
+            print >>fo, "\t\tblockSize[" + str(i) + "] += header.blockSize;"
+            print >>fo, "\t\toffset += sizeof(struct columnHeader);"
+            print >>fo, "\t\t" + factName + "->dataFormat[" + str(i) + "] = header.format;"
+            print >>fo, "\t\toutSize = header.blockSize;"
+            print >>fo, "\t\tclock_gettime(CLOCK_REALTIME,&diskStart);"
+            print >>fo, "\t\toutTable = (char *)mmap(0,outSize,PROT_READ,MAP_SHARED,outFd,offset);"
+
+            if CODETYPE == 0:
+                if POS == 0:
+                    print >>fo, "\t\t" + factName + "->content[" + str(i) + "] = (char *)malloc(outSize);\n"
+                    print >>fo, "\t\tCHECK_POINTER(" + factName + "->content[" + str(i) + "]);"
+                    print >>fo, "\t\tmemcpy("+factName+"->content["+str(i)+"],outTable,outSize);"
+                elif POS == 1:
+                    print >>fo, "\t\tCUDA_SAFE_CALL_NO_SYNC(cudaMallocHost((void**)&"+factName+"->content["+str(i)+"],outSize));"
+                    print >>fo, "\t\tmemcpy("+factName+"->content["+str(i)+"],outTable,outSize);"
+                elif POS == 2:
+                    print >>fo, "\t\tCUDA_SAFE_CALL_NO_SYNC(cudaMallocHost((void**)&"+factName+"->content["+str(i)+"],outSize));"
+                    print >>fo, "\t\tmemcpy("+factName+"->content["+str(i)+"],outTable,outSize);"
+                elif POS == 3:
+                    print >>fo, "\t\t"+factName+"->content["+str(i)+"] = (char *)mmap(0,outSize,PROT_READ,MAP_SHARED,outFd,offset);"
+                else:
+                    print >>fo, "\t\t" + factName + "->content[" + str(i) + "] = (char*)memalign(256,outSize);\n"
+                    print >>fo, "\t\tmemcpy("+factName+"->content["+str(i)+"],outTable,outSize);"
 
             else:
-                if exp.cons_type == "INTEGER":
-                    print >>fo, "\tgbNode->attrType[" + str(i) + "] = INT;"
-                    print >>fo, "\tgbNode->attrSize[" + str(i) + "] = sizeof(int);"
-                    print >>fo, "\tgbNode->tupleSize += sizeof(int);"
-                elif exp.cons_type == "FLOAT":
-                    print >>fo, "\tgbNode->attrType[" + str(i) + "] = FLOAT;"
-                    print >>fo, "\tgbNode->attrSize[" + str(i) + "] = sizeof(float);"
-                    print >>fo, "\tgbNode->tupleSize += sizeof(float);"
+                if POS == 0:
+                    print >>fo, "\t\t"+factName+"->content["+str(i)+"] = (char *)memalign(256,outSize);"
+                    print >>fo, "\t\tmemcpy("+factName+"->content["+str(i)+"],outTable,outSize);"
+                elif POS == 3:
+                    print >>fo, "\t\t"+factName+"->content["+str(i)+"] = (char *)mmap(0,outSize,PROT_READ,MAP_SHARED,outFd,offset);"
                 else:
+                    print >>fo, "\t\t"+factName+"->content["+str(i)+"] = (char *)clCreateBuffer(context.context,CL_MEM_READ_ONLY|CL_MEM_ALLOC_HOST_PTR,outSize,NULL,0);"
+                    print >>fo, "\t\tclTmp = clEnqueueMapBuffer(context.queue,(cl_mem)"+factName+"->content["+str(i)+"],CL_TRUE,CL_MAP_WRITE,0,outSize,0,0,0,0);"
+                    print >>fo, "\t\tmemcpy(clTmp,outTable,outSize);"
+                    print >>fo, "\t\tclEnqueueUnmapMemObject(context.queue,(cl_mem)"+factName+"->content["+str(i)+"],clTmp,0,0,0);"
+
+
+            print >>fo, "\t\tmunmap(outTable,outSize);"
+            print >>fo, "\t\tclock_gettime(CLOCK_REALTIME,&diskEnd);"
+            print >>fo, "\t\tdiskTotal += (diskEnd.tv_sec -  diskStart.tv_sec)* BILLION + diskEnd.tv_nsec - diskStart.tv_nsec;"
+            print >>fo, "\t\tclose(outFd);"
+            print >>fo, "\t\t" + factName + "->attrTotalSize[" + str(i) + "] = outSize;"
+
+        tupleSize += ";\n"
+        print >>fo, "\t\t" + factName + "->tupleSize = " + tupleSize 
+
+        print >>fo, "\t\t" + factName + "->tupleNum = header.tupleNum;"
+
+################# end of reading the needed attributes of fact table from disk ###############
+
+        if joinAttr.factTables[0].where_condition is not None:
+            hasWhere = 1
+            whereExp = joinAttr.factTables[0].where_condition.where_condition_exp
+            whereList = []
+            relList = []
+            conList = []
+
+            get_where_attr(whereExp,whereList,relList,conList)
+            newWhereList = []
+            whereLen = count_whereList(whereList, newWhereList)
+            nested = count_whereNested(whereExp)
+
+            if nested !=0:
+                print "Not supported yet: the where expression is too complicated"
+                print 1/0
+
+            relName = joinAttr.factTables[0].table_name.lower() + "Rel"
+            print >>fo, "\t\tstruct scanNode " + relName + ";"
+            print >>fo, "\t\t" + relName + ".tn = " + factName + ";"
+            print >>fo, "\t\t" + relName + ".hasWhere = 1;"
+            print >>fo, "\t\t" + relName + ".whereAttrNum = " + str(whereLen) + ";"
+            print >>fo, "\t\t" + relName + ".outputNum = " + str(len(selectList)) + ";"
+            print >>fo, "\t\t" + relName + ".whereIndex = (int *)malloc(sizeof(int)*" + str(whereLen) + ");"
+            print >>fo, "\t\tCHECK_POINTER(" + relName + ".whereIndex);"
+            print >>fo, "\t\t" + relName + ".outputIndex = (int *)malloc(sizeof(int)*" + str(len(selectList)) + ");"
+            print >>fo, "\t\tCHECK_POINTER(" + relName + ".outputIndex);"
+
+            for i in range(0,len(newWhereList)):
+                colIndex = indexList.index(newWhereList[i].column_name)
+                print >>fo, "\t\t" + relName + ".whereIndex["+str(i) + "] = " + str(colIndex) + ";"
+
+            for i in range(0,len(selectList)):
+                colIndex = selectList[i].column_name
+                outputIndex = indexList.index(colIndex)
+                print >>fo, "\t\t" + relName + ".outputIndex[" + str(i) + " ] = " + str(outputIndex) + ";"
+
+            if keepInGpu == 0:
+                print >>fo, "\t\t" + relName + ".keepInGpu = 0;"
+            else:
+                print >>fo, "\t\t" + relName + ".keepInGpu = 1;"
+
+            print >>fo, "\t\t" + relName + ".filter = (struct whereCondition *)malloc(sizeof(struct whereCondition));"
+            print >>fo, "\t\tCHECK_POINTER(" + relName + ".filter);"
+
+            print >>fo, "\t\t(" + relName + ".filter)->nested = 0;"
+            print >>fo, "\t\t(" + relName + ".filter)->expNum = " + str(len(whereList)) + ";"
+            print >>fo, "\t\t(" + relName + ".filter)->exp = (struct whereExp*) malloc(sizeof(struct whereExp) *" + str(len(whereList)) + ");"
+            print >>fo, "\t\tCHECK_POINTER((" + relName + ".filter)->exp);"
+
+            if joinAttr.factTables[0].where_condition.where_condition_exp.func_name in ["AND","OR"]:
+                print >>fo, "\t\t(" + relName + ".filter)->andOr = " + joinAttr.factTables[0].where_condition.where_condition_exp.func_name + ";"
+
+            else:
+                print >>fo, "\t\t(" + relName + ".filter)->andOr = EXP;"
+
+            for i in range(0,len(whereList)):
+                colIndex = -1
+                for j in range(0,len(newWhereList)):
+                    if newWhereList[j].compare(whereList[i]) is True:
+                        colIndex = j
+                        break
+
+                if colIndex <0:
                     print 1/0
 
-                print >>fo, "\tgbNode->gbExp[" + str(i) + "].func = NOOP;"
-                print >>fo, "\tgbNode->gbExp[" + str(i) + "].exp.op = NOOP;"
-                print >>fo, "\tgbNode->gbExp[" + str(i) + "].exp.exp = NULL;"
-                print >>fo, "\tgbNode->gbExp[" + str(i) + "].exp.opNum = 1;"
-                print >>fo, "\tgbNode->gbExp[" + str(i) + "].exp.opType = CONS;"
-                print >>fo, "\tgbNode->gbExp[" + str(i) + "].exp.opValue = " + str(exp.cons_value) + ";"
+                print >>fo, "\t\t(" + relName + ".filter)->exp[" + str(i) + "].index = " + str(colIndex) + ";"
+                print >>fo, "\t\t(" + relName + ".filter)->exp[" + str(i) + "].relation = " + relList[i] + ";" 
 
-        resultNode = "gbResult"
+                colType = whereList[i].column_type
+                ctype = to_ctype(colType)
 
-        if CODETYPE == 0:
-            print >>fo, "\tstruct tableNode * " + resultNode + " = groupBy(gbNode, &pp);"
-        else:
-            print >>fo, "\tstruct tableNode * " + resultNode + " = groupBy(gbNode, &context,&pp);"
-        print >>fo, "\tfreeGroupByNode(gbNode);\n"
+                if ctype == "INT":
+                    print >>fo, "\t\t{"
+                    print >>fo, "\t\t\tint tmp = " + conList[i] + ";"
+                    print >>fo, "\t\t\tmemcpy((" + relName + ".filter)->exp[" + str(i) + "].content, &tmp,sizeof(int));"
+                    print >>fo, "\t\t}"
 
+                elif ctype == "FLOAT":
 
-    if len(orderbyNode) > 0 :
-        """
-        Generate codes for order by node.
-        """
+                    print >>fo, "\t\t{"
+                    print >>fo, "\t\t\tfloat tmp = " + conList[i] + ";"
+                    print >>fo, "\t\t\tmemcpy((" + relName + ".filter)->exp[" + str(i) + "].content, &tmp,sizeof(float));"
+                    print >>fo, "\t\t}"
+                    print 1/0
+                else:
+                    print >>fo, "\t\tstrcpy((" + relName + ".filter)->exp[" + str(i) + "].content," + conList[i] + ");\n"
 
-        orderby_exp_list = orderbyNode[0].order_by_clause.orderby_exp_list
-        odLen = len(orderby_exp_list)
-        print >>fo, "\tstruct orderByNode * odNode = (struct orderByNode *) malloc(sizeof(struct orderByNode));"
-        print >>fo, "\tCHECK_POINTER(odNode);"
-        print >>fo, "\todNode->table = " +resultNode +";"
-        print >>fo, "\todNode->orderByNum = " + str(odLen) + ";"
-        print >>fo, "\todNode->orderBySeq = (int *) malloc(sizeof(int) * odNode->orderByNum);"
-        print >>fo, "\tCHECK_POINTER(odNode->orderBySeq);"
-        print >>fo, "\todNode->orderByIndex = (int *) malloc(sizeof(int) * odNode->orderByNum);"
-        print >>fo, "\tCHECK_POINTER(odNode->orderByIndex);"
-
-        for i in range(0,odLen):
-            seq = orderbyNode[0].order_by_clause.order_indicator_list[i]
-            if seq == "ASC":
-                print >>fo, "\todNode->orderBySeq[" + str(i) + "] = ASC;"
+            if CODETYPE == 0:
+                print >>fo, "\t\tstruct tableNode * " + resName + " = tableScan(&" + relName + ", &pp);"
             else:
-                print >>fo, "\todNode->orderBySeq[" + str(i) + "] = DESC;"
+                print >>fo, "\t\tstruct tableNode * " + resName + " = tableScan(&" + relName + ", &context,&pp);"
 
-            print >>fo, "\todNode->orderByIndex[" + str(i) + "] = " + str(orderby_exp_list[i].column_name) + ";"
+            if selectOnly == 0:
+                print >>fo, "\t\tclock_gettime(CLOCK_REALTIME,&diskStart);"
+                print >>fo, "\t\tfreeScan(&" + relName + ");\n"
+                if CODETYPE == 1:
+                    print >>fo, "\t\tclFinish(context.queue);"
+                print >>fo, "\t\tclock_gettime(CLOCK_REALTIME,&diskEnd);"
+                print >>fo, "\t\tdiskTotal += (diskEnd.tv_sec -  diskStart.tv_sec)* BILLION + diskEnd.tv_nsec - diskStart.tv_nsec;"
 
-        resultNode = "odResult"
-
-        if CODETYPE == 0:
-            print >>fo, "\tstruct tableNode * " + resultNode + " = orderBy(odNode,&pp);"
         else:
-            print >>fo, "\tstruct tableNode * " + resultNode + " = orderBy(odNode, &context,&pp);"
+            hasWhere = 0
+            print >>fo, "\t\tstruct tableNode * " + resName + " = " + factName + ";"
 
-        print >>fo, "\tfreeOrderByNode(odNode);\n"
+        factName = resName
+        for i in range(0,len(joinAttr.dimTables)):
+            jName = "jNode" + str(i)
+            dimName = joinAttr.dimTables[i].table_name.lower() + "Res"
+            print >>fo, "\t\tstruct joinNode " + jName + ";"
+            print >>fo, "\t\t" + jName + ".leftTable = " + factName + ";"
+            print >>fo, "\t\t" + jName + ".rightTable = " + dimName + ";"
 
-    print >>fo, "\tstruct materializeNode mn;"
-    print >>fo, "\tmn.table = "+resultNode + ";"
-    if CODETYPE == 0:
-        print >>fo, "\tmaterializeCol(&mn, &pp);"
-    else:
-        print >>fo, "\tmaterializeCol(&mn, &context,&pp);"
-    print >>fo, "\tfreeTable("+resultNode + ");\n"
+            lOutList = joinAttr.outIndex[i][0]
+            rOutList = joinAttr.outIndex[i][1]
 
-    if CODETYPE == 1:
-        print >>fo, "\tclReleaseCommandQueue(context.queue);"
-        print >>fo, "\tclReleaseContext(context.context);"
-        print >>fo, "\tclReleaseProgram(context.program);\n"
+            lPosList = joinAttr.outPos[i][0]
+            rPosList = joinAttr.outPos[i][1]
+
+            lAttrList = joinAttr.outAttr[i][0]
+            rAttrList = joinAttr.outAttr[i][1]
+
+            print >>fo, "\t\t" + jName + ".totalAttr = " + str(len(rOutList) + len(lOutList)) + ";"
+            print >>fo, "\t\t" + jName + ".keepInGpu = (int *) malloc(sizeof(int) * " + str(len(rOutList) + len(lOutList)) + ");"
+            print >>fo, "\t\tCHECK_POINTER(" + jName + ".keepInGpu);"
+
+            if keepInGpu == 0:
+                print >>fo, "\t\tfor(int k=0;k<" + str(len(rOutList) + len(lOutList))  + ";k++)"
+                print >>fo, "\t\t\t" + jName + ".keepInGpu[k] = 0;"
+            else:
+                print >>fo, "\t\tfor(int k=0;k<" + str(len(rOutList) + len(lOutList))  + ";k++)"
+                print >>fo, "\t\t\t" + jName + ".keepInGpu[k] = 1;"
+
+            print >>fo, "\t\t" + jName + ".rightOutputAttrNum = " + str(len(rOutList)) + ";"
+            print >>fo, "\t\t" + jName + ".leftOutputAttrNum = " + str(len(lOutList)) + ";"
+            print >>fo, "\t\t" + jName + ".leftOutputAttrType = (int *)malloc(sizeof(int)*" + str(len(lOutList)) + ");"
+            print >>fo, "\t\tCHECK_POINTER(" + jName + ".leftOutputAttrType);"
+            print >>fo, "\t\t" + jName + ".leftOutputIndex = (int *)malloc(sizeof(int)*" + str(len(lOutList)) + ");"
+            print >>fo, "\t\tCHECK_POINTER(" + jName + ".leftOutputIndex);"
+            print >>fo, "\t\t" + jName + ".leftPos = (int *)malloc(sizeof(int)*" + str(len(lOutList)) + ");"
+            print >>fo, "\t\tCHECK_POINTER(" + jName + ".leftPos);"
+            print >>fo, "\t\t" + jName + ".tupleSize = 0;"
+            for j in range(0,len(lOutList)):
+                ctype = to_ctype(lAttrList[j].type)
+                print >>fo, "\t\t" + jName + ".leftOutputIndex[" + str(j) + "] = " + str(lOutList[j]) + ";"
+                print >>fo, "\t\t" + jName + ".leftOutputAttrType[" + str(j) + "] = " + ctype + ";" 
+                print >>fo, "\t\t" + jName + ".leftPos[" + str(j) + "] = " + str(lPosList[j]) + ";"
+                print >>fo, "\t\t" + jName + ".tupleSize += " + factName + "->attrSize[" + str(lOutList[j]) + "];"
+
+            print >>fo, "\t\t" + jName + ".rightOutputAttrType = (int *)malloc(sizeof(int)*" + str(len(rOutList)) + ");"
+            print >>fo, "\t\tCHECK_POINTER(" + jName + ".rightOutputAttrType);"
+            print >>fo, "\t\t" + jName + ".rightOutputIndex = (int *)malloc(sizeof(int)*" + str(len(rOutList)) + ");"
+            print >>fo, "\t\tCHECK_POINTER(" + jName + ".rightOutputIndex);"
+            print >>fo, "\t\t" + jName + ".rightPos = (int *)malloc(sizeof(int)*" + str(len(rOutList)) + ");"
+            print >>fo, "\t\tCHECK_POINTER(" + jName + ".rightPos);"
+            for j in range(0,len(rOutList)):
+                ctype = to_ctype(rAttrList[j].type)
+                print >>fo, "\t\t" + jName + ".rightOutputIndex[" + str(j) + "] = " + str(rOutList[j]) + ";"
+                print >>fo, "\t\t" + jName + ".rightOutputAttrType[" + str(j) + "] = " + ctype + ";"
+                print >>fo, "\t\t" + jName + ".rightPos[" + str(j) + "] = " + str(rPosList[j]) + ";"
+                print >>fo, "\t\t" + jName + ".tupleSize += " + dimName + "->attrSize[" + str(rOutList[j]) + "];"
+
+            print >>fo, "\t\t" + jName + ".rightKeyIndex = " + str(joinAttr.dimIndex[i]) + ";"
+            print >>fo, "\t\t" + jName + ".leftKeyIndex = " + str(joinAttr.factIndex[i]) + ";"
+
+            if CODETYPE == 0:
+                print >>fo, "\t\tstruct tableNode *join" + str(i) + " = tcuJoin(&" + jName + ",&pp);\n"
+            else:
+                print >>fo, "\t\tstruct tableNode *join" + str(i) + " = tcuJoin(&" + jName + ", &context, &pp);\n" 
+
+            factName = "join" + str(i)
+
+        if selectOnly == 0:
+            print >>fo, "\t\tif(blockTotal !=1){"
+
+            if CODETYPE == 0:
+                print >>fo, "\t\t\tmergeIntoTable("+resultNode+",join" + str(i) + ", &pp);"
+            else:
+                print >>fo, "\t\t\tmergeIntoTable("+resultNode+",join" + str(i) + ", &context, &pp);"
+                
+
+            print >>fo, "\t\t\tclock_gettime(CLOCK_REALTIME,&diskStart);"
+            for i in range(0,len(joinAttr.dimTables)):
+                jName = "join" + str(i)
+                print >>fo, "\t\t\tfreeTable(" + jName + ");"
+
+            if CODETYPE == 1:
+                print >>fo, "\t\t\tclFinish(context.queue);"
+            print >>fo, "\t\t\tclock_gettime(CLOCK_REALTIME,&diskEnd);"
+            print >>fo, "\t\t\tdiskTotal += (diskEnd.tv_sec -  diskStart.tv_sec)* BILLION + diskEnd.tv_nsec - diskStart.tv_nsec;"
+
+            print >>fo, "\t\t}else{"
+            print >>fo, "\t\t\tclock_gettime(CLOCK_REALTIME,&diskStart);"
+            print >>fo, "\t\t\tfreeTable(" +resultNode + ");"
+            print >>fo, "\t\t\t"+resultNode+" = join" + str(i) + ";" 
+            for i in range(0,len(joinAttr.dimTables)-1):
+                jName = "join" + str(i)
+                print >>fo, "\t\t\tfreeTable(" + jName + ");"
+
+            if CODETYPE == 1:
+                print >>fo, "\t\t\tclFinish(context.queue);"
+            print >>fo, "\t\t\tclock_gettime(CLOCK_REALTIME,&diskEnd);"
+            print >>fo, "\t\t\tdiskTotal += (diskEnd.tv_sec -  diskStart.tv_sec)* BILLION + diskEnd.tv_nsec - diskStart.tv_nsec;"
+            print >>fo, "\t\t}"
+
+        else:
+            print >>fo, "\t\tif(blockTotal !=1){"
+
+            if CODETYPE == 0:
+                print >>fo, "\t\t\tmergeIntoTable("+resultNode+"," + resName + ",&pp);"
+            else:
+                print >>fo, "\t\t\tmergeIntoTable("+resultNode+"," + resName + ", &context, &pp);"
+
+            print >>fo, "\t\t}else{"
+            print >>fo, "\t\t\tclock_gettime(CLOCK_REALTIME,&diskStart);"
+            print >>fo, "\t\t\tfreeTable(" +resultNode + ");"
+            print >>fo, "\t\t\t"+resultNode+" = " + resName + ";"
+
+            if CODETYPE == 1:
+                print >>fo, "\t\t\tclFinish(context.queue);"
+            print >>fo, "\t\t\tclock_gettime(CLOCK_REALTIME,&diskEnd);"
+            print >>fo, "\t\t\tdiskTotal += (diskEnd.tv_sec -  diskStart.tv_sec)* BILLION + diskEnd.tv_nsec - diskStart.tv_nsec;"
+            print >>fo, "\t\t}"
+
+            if hasWhere != 0:
+                print >>fo, "\t\tclock_gettime(CLOCK_REALTIME,&diskStart);"
+                print >>fo, "\t\tfreeScan(&" + relName + ");\n"
+
+                if CODETYPE == 1:
+                    print >>fo, "\t\tclFinish(context.queue);"
+                print >>fo, "\t\tclock_gettime(CLOCK_REALTIME,&diskEnd);"
+                print >>fo, "\t\tdiskTotal += (diskEnd.tv_sec -  diskStart.tv_sec)* BILLION + diskEnd.tv_nsec - diskStart.tv_nsec;"
+
+        print >>fo, "\t}\n"
+    # TCU does not require additional aggregation.
+    if joinType == 0 or joinType == 1: 
+        if len(aggNode) >0 :
+            """
+            Generate codes for aggregation node.
+            """
+    
+            gb_exp_list = aggNode[0].group_by_clause.groupby_exp_list
+            select_list = aggNode[0].select_list.tmp_exp_list
+            selectLen = len(select_list)
+            gbLen = len(gb_exp_list)
+            print >>fo, "\tstruct groupByNode * gbNode = (struct groupByNode *) malloc(sizeof(struct groupByNode));"
+            print >>fo, "\tCHECK_POINTER(gbNode);"
+            print >>fo, "\tgbNode->table = " +resultNode +";"
+            print >>fo, "\tgbNode->groupByColNum = " + str(gbLen) + ";"
+            print >>fo, "\tgbNode->groupByIndex = (int *)malloc(sizeof(int) * " + str(gbLen) + ");"
+            print >>fo, "\tCHECK_POINTER(gbNode->groupByIndex);"
+            print >>fo, "\tgbNode->groupByType = (int *)malloc(sizeof(int) * " + str(gbLen) + ");"
+            print >>fo, "\tCHECK_POINTER(gbNode->groupByType);"
+            print >>fo, "\tgbNode->groupBySize = (int *)malloc(sizeof(int) * " + str(gbLen) + ");"
+            print >>fo, "\tCHECK_POINTER(gbNode->groupBySize);"
+    
+            for i in range(0,gbLen):
+                exp = gb_exp_list[i]
+                if isinstance(exp, ystree.YRawColExp):
+                    print >>fo, "\tgbNode->groupByIndex[" + str(i) + "] = " + str(exp.column_name) + ";"
+                    print >>fo, "\tgbNode->groupByType[" + str(i) + "] = gbNode->table->attrType[" + str(exp.column_name) + "];" 
+                    print >>fo, "\tgbNode->groupBySize[" + str(i) + "] = gbNode->table->attrSize[" + str(exp.column_name) + "];" 
+                elif isinstance(exp, ystree.YConsExp):
+                    print >>fo, "\tgbNode->groupByIndex[" + str(i) + "] = -1;" 
+                    print >>fo, "\tgbNode->groupByType[" + str(i) + "] = INT;" 
+                    print >>fo, "\tgbNode->groupBySize[" + str(i) + "] = sizeof(int);" 
+                else:
+                    print 1/0
+    
+            print >>fo, "\tgbNode->outputAttrNum = " + str(selectLen) + ";"
+            print >>fo, "\tgbNode->attrType = (int *) malloc(sizeof(int) *" + str(selectLen) + ");"
+            print >>fo, "\tCHECK_POINTER(gbNode->attrType);"
+            print >>fo, "\tgbNode->attrSize = (int *) malloc(sizeof(int) *" + str(selectLen) + ");"
+            print >>fo, "\tCHECK_POINTER(gbNode->attrSize);"
+            print >>fo, "\tgbNode->tupleSize = 0;"
+            print >>fo, "\tgbNode->gbExp = (struct groupByExp *) malloc(sizeof(struct groupByExp) * " + str(selectLen) + ");"
+            print >>fo, "\tCHECK_POINTER(gbNode->gbExp);"
+    
+            for i in range(0,selectLen):
+                exp = select_list[i]
+                if isinstance(exp, ystree.YFuncExp):
+    
+                    print >>fo, "\tgbNode->tupleSize += sizeof(float);"
+                    print >>fo, "\tgbNode->attrType[" + str(i) + "] = FLOAT;"
+                    print >>fo, "\tgbNode->attrSize[" + str(i) + "] = sizeof(float);"
+                    print >>fo, "\tgbNode->gbExp["+str(i)+"].func = " + exp.func_name + ";"
+                    para = exp.parameter_list[0]
+                    mathFunc = mathExp()
+                    mathFunc.addOp(para)
+                    prefix = "\tgbNode->gbExp[" + str(i) + "].exp"
+                    printMathFunc(fo,prefix, mathFunc)
+    
+                elif isinstance(exp, ystree.YRawColExp):
+                    colIndex = exp.column_name
+                    print >>fo, "\tgbNode->attrType[" + str(i) + "] = " + resultNode + "->attrType[" + str(colIndex) + "];"
+                    print >>fo, "\tgbNode->attrSize[" + str(i) + "] = " + resultNode + "->attrSize[" + str(colIndex) + "];"
+                    print >>fo, "\tgbNode->tupleSize += "+resultNode + "->attrSize[" + str(colIndex) + "];"
+                    print >>fo, "\tgbNode->gbExp[" + str(i) + "].func = NOOP;"
+                    print >>fo, "\tgbNode->gbExp[" + str(i) + "].exp.op = NOOP;"
+                    print >>fo, "\tgbNode->gbExp[" + str(i) + "].exp.exp = NULL;"
+                    print >>fo, "\tgbNode->gbExp[" + str(i) + "].exp.opNum = 1;"
+                    print >>fo, "\tgbNode->gbExp[" + str(i) + "].exp.opType = COLUMN;"
+                    print >>fo, "\tgbNode->gbExp[" + str(i) + "].exp.opValue = " + str(exp.column_name) + ";"
+    
+                else:
+                    if exp.cons_type == "INTEGER":
+                        print >>fo, "\tgbNode->attrType[" + str(i) + "] = INT;"
+                        print >>fo, "\tgbNode->attrSize[" + str(i) + "] = sizeof(int);"
+                        print >>fo, "\tgbNode->tupleSize += sizeof(int);"
+                    elif exp.cons_type == "FLOAT":
+                        print >>fo, "\tgbNode->attrType[" + str(i) + "] = FLOAT;"
+                        print >>fo, "\tgbNode->attrSize[" + str(i) + "] = sizeof(float);"
+                        print >>fo, "\tgbNode->tupleSize += sizeof(float);"
+                    else:
+                        print 1/0
+    
+                    print >>fo, "\tgbNode->gbExp[" + str(i) + "].func = NOOP;"
+                    print >>fo, "\tgbNode->gbExp[" + str(i) + "].exp.op = NOOP;"
+                    print >>fo, "\tgbNode->gbExp[" + str(i) + "].exp.exp = NULL;"
+                    print >>fo, "\tgbNode->gbExp[" + str(i) + "].exp.opNum = 1;"
+                    print >>fo, "\tgbNode->gbExp[" + str(i) + "].exp.opType = CONS;"
+                    print >>fo, "\tgbNode->gbExp[" + str(i) + "].exp.opValue = " + str(exp.cons_value) + ";"
+    
+            resultNode = "gbResult"
+    
+            if CODETYPE == 0:
+                print >>fo, "\tstruct tableNode * " + resultNode + " = groupBy(gbNode, &pp);"
+            else:
+                print >>fo, "\tstruct tableNode * " + resultNode + " = groupBy(gbNode, &context,&pp);"
+            print >>fo, "\tfreeGroupByNode(gbNode);\n"
+    
+    
+        if len(orderbyNode) > 0 :
+            """
+            Generate codes for order by node.
+            """
+    
+            orderby_exp_list = orderbyNode[0].order_by_clause.orderby_exp_list
+            odLen = len(orderby_exp_list)
+            print >>fo, "\tstruct orderByNode * odNode = (struct orderByNode *) malloc(sizeof(struct orderByNode));"
+            print >>fo, "\tCHECK_POINTER(odNode);"
+            print >>fo, "\todNode->table = " +resultNode +";"
+            print >>fo, "\todNode->orderByNum = " + str(odLen) + ";"
+            print >>fo, "\todNode->orderBySeq = (int *) malloc(sizeof(int) * odNode->orderByNum);"
+            print >>fo, "\tCHECK_POINTER(odNode->orderBySeq);"
+            print >>fo, "\todNode->orderByIndex = (int *) malloc(sizeof(int) * odNode->orderByNum);"
+            print >>fo, "\tCHECK_POINTER(odNode->orderByIndex);"
+    
+            for i in range(0,odLen):
+                seq = orderbyNode[0].order_by_clause.order_indicator_list[i]
+                if seq == "ASC":
+                    print >>fo, "\todNode->orderBySeq[" + str(i) + "] = ASC;"
+                else:
+                    print >>fo, "\todNode->orderBySeq[" + str(i) + "] = DESC;"
+    
+                print >>fo, "\todNode->orderByIndex[" + str(i) + "] = " + str(orderby_exp_list[i].column_name) + ";"
+    
+            resultNode = "odResult"
+    
+            if CODETYPE == 0:
+                print >>fo, "\tstruct tableNode * " + resultNode + " = orderBy(odNode,&pp);"
+            else:
+                print >>fo, "\tstruct tableNode * " + resultNode + " = orderBy(odNode, &context,&pp);"
+    
+            print >>fo, "\tfreeOrderByNode(odNode);\n"
+    if joinType == 0 or joinType == 1: 
+
+        print >>fo, "\tstruct materializeNode mn;"
+        print >>fo, "\tmn.table = "+resultNode + ";"
+        if CODETYPE == 0:
+            print >>fo, "\tmaterializeCol(&mn, &pp);"
+        else:
+            print >>fo, "\tmaterializeCol(&mn, &context,&pp);"
+        print >>fo, "\tfreeTable("+resultNode + ");\n"
+    
+        if CODETYPE == 1:
+            print >>fo, "\tclReleaseCommandQueue(context.queue);"
+            print >>fo, "\tclReleaseContext(context.context);"
+            print >>fo, "\tclReleaseProgram(context.program);\n"
+    
+        #print >>fo, "\tclock_gettime(CLOCK_REALTIME,&end);"
+        #print >>fo, "\tdouble timeE = (end.tv_sec -  start.tv_sec)* BILLION + end.tv_nsec - start.tv_nsec;"
+        #print >>fo, "\tprintf(\"Disk Load Time: %lf\\n\", diskTotal/(1000*1000));"
+        print >>fo, "\tprintf(\"PCIe Time: %lf\\n\",pp.pcie);"
+        print >>fo, "\tprintf(\"Kernel Time: %lf\\n\",pp.kernel);"
+        #print >>fo, "\tprintf(\"Total Time: %lf\\n\", timeE/(1000*1000));"
+        #print >>fo, "}\n"
 
     print >>fo, "\tclock_gettime(CLOCK_REALTIME,&end);"
     print >>fo, "\tdouble timeE = (end.tv_sec -  start.tv_sec)* BILLION + end.tv_nsec - start.tv_nsec;"
     print >>fo, "\tprintf(\"Disk Load Time: %lf\\n\", diskTotal/(1000*1000));"
-    print >>fo, "\tprintf(\"PCIe Time: %lf\\n\",pp.pcie);"
-    print >>fo, "\tprintf(\"Kernel Time: %lf\\n\",pp.kernel);"
     print >>fo, "\tprintf(\"Total Time: %lf\\n\", timeE/(1000*1000));"
     print >>fo, "}\n"
-
     fo.close()
 
 """

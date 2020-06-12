@@ -30,13 +30,13 @@ TCGemm: simpleTensorCoreGEMM.cu
 	$(NVCC) -o TCGemm -arch=sm_70 -lcublas -lcurand simpleTensorCoreGEMM.cu
 
 gpudb: gpu cpu
-	 $(NVCC) -pg tableScan.o inviJoin.o hashJoin.o cuckoo.o materialize.o groupby.o orderBy.o driver.o $(LDFLAGS) -o GPUDATABASE -lcurand -lcublas
+	 $(NVCC) -pg tableScan.o inviJoin.o hashJoin.o tcuJoin.o cuckoo.o materialize.o groupby.o orderBy.o driver.o $(LDFLAGS) -o GPUDATABASE -lcurand -lcublas
 
 cpu: driver.cu 
 	$(NVCC) -c -g $(GENCODE_FLAGS) driver.cu
 
-gpu: tableScan.cu hashJoin.cu cuckoo.cu inviJoin.cu materialize.cu groupby.cu orderBy.cu
-	$(NVCC) -c -g $(GENCODE_FLAGS) tableScan.cu hashJoin.cu cuckoo.cu inviJoin.cu materialize.cu groupby.cu orderBy.cu 
+gpu: tableScan.cu hashJoin.cu tcuJoin.cu cuckoo.cu inviJoin.cu materialize.cu groupby.cu orderBy.cu
+	$(NVCC) -c -g $(GENCODE_FLAGS) tableScan.cu hashJoin.cu tcuJoin.cu cuckoo.cu inviJoin.cu materialize.cu groupby.cu orderBy.cu 
 
 all: gpudb
 

@@ -26,7 +26,7 @@
 #include <cuda.h>
 #include <time.h>
 #include "../include/common.h"
-#include "../include/hashJoin.h"
+#include "../include/tcuJoin.h"
 #include "../include/gpuCudaLib.h"
 #include "scanImpl.cu"
 #include <cuda_fp16.h>
@@ -46,14 +46,14 @@ const int WMMA_N = 16;
 const int WMMA_K = 16;
 
 // Define some error checking macros.
-/*
+
 #define cudaErrCheck(stat) { cudaErrCheck_((stat), __FILE__, __LINE__); }
 void cudaErrCheck_(cudaError_t stat, const char *file, int line) {
     if (stat != cudaSuccess) {
         fprintf(stderr, "CUDA Error: %s %s %d\n", cudaGetErrorString(stat), file, line);
     }
 }
-
+/*
 #define curandErrCheck(stat) { curandErrCheck_((stat), __FILE__, __LINE__); }
 void curandErrCheck_(curandStatus_t stat, const char *file, int line) {
     if (stat != CURAND_STATUS_SUCCESS) {
@@ -679,7 +679,6 @@ __host__ void static convertIntToFp32(float *out, int *in, int width) {
    3) Neither A nor B are transposed.
 
  */
-/*
 __global__ void wmma_example(half *a, half *b, float *c, int M, int N, int K, float alpha, float beta) {
     // Leading dimensions. Packed with no transpositions.
     int lda = M;
@@ -733,10 +732,9 @@ __global__ void wmma_example(half *a, half *b, float *c, int M, int N, int K, fl
         wmma::store_matrix_sync(c + cRow + cCol * ldc, c_frag, ldc, wmma::mem_col_major);
     }
 }
-*/
 
 /*
- * hashJoin implements the foreign key join between a fact table and dimension table.
+ * tcuJoinn using NVIDIA's WMMA lib to perform matrix multiplication can aggregation..
  *
  * Prerequisites:
  *  1. the data to be joined can be fit into GPU device memory.
@@ -749,7 +747,9 @@ __global__ void wmma_example(half *a, half *b, float *c, int M, int N, int K, fl
  * Output:
  *  A new table node
  */
-struct tableNode * hashJoin(struct joinNode *jNode, struct statistic *pp){
+struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp){
+
+    printf("Call from tcuJoin.cu\n");
 
     struct timespec start,end; // hashJoin overall timing
     clock_gettime(CLOCK_REALTIME,&start);
@@ -838,7 +838,7 @@ struct tableNode * hashJoin(struct joinNode *jNode, struct statistic *pp){
 /*
  *  build hash table on GPU
  */
-    /*
+    
     struct timespec tcu_start, tcu_end;
     struct timespec init_start, init_end;
     clock_gettime(CLOCK_REALTIME, &tcu_start);
@@ -937,7 +937,7 @@ struct tableNode * hashJoin(struct joinNode *jNode, struct statistic *pp){
     convertIntToFp32(mat1_fp32, matrix1, MATRIX_M);
     convertIntToFp32(mat2_fp32, matrix2, MATRIX_N);
     clock_gettime(CLOCK_REALTIME, &convert_end);
-    */
+    
     // print matrix for debugging
     //printf("Matrix 1:\n");
     //print_matrix(mat1_fp32, MATRIX_M);
@@ -946,7 +946,6 @@ struct tableNode * hashJoin(struct joinNode *jNode, struct statistic *pp){
     
 
     // copy data to device for computation
-    /*
     clock_gettime(CLOCK_REALTIME, &cuMemcpy_start);
     cudaErrCheck(cudaMalloc((void**)&mat1_dev, MATRIX_M * MATRIX_K * sizeof(half)));
     cudaErrCheck(cudaMalloc((void**)&mat2_dev, MATRIX_K * MATRIX_N * sizeof(half)));
@@ -962,8 +961,7 @@ struct tableNode * hashJoin(struct joinNode *jNode, struct statistic *pp){
     c_host_wmma = (float*)malloc(MATRIX_M * MATRIX_N * sizeof(float));
     //c_host_cublas = (float*)malloc(MATRIX_M * MATRIX_N * sizeof(float));
     //c_host_sgemm = (float*)malloc(MATRIX_M * MATRIX_N * sizeof(float));
-    */
-    /*
+
     cudaErrCheck(cudaMemcpy(mat1_dev_fp32, mat1_fp32, sizeof(float) * MATRIX_M * MATRIX_K, cudaMemcpyHostToDevice));
     cudaErrCheck(cudaMemcpy(mat2_dev_fp32, mat2_fp32, sizeof(float) * MATRIX_K * MATRIX_N, cudaMemcpyHostToDevice));
     convertFp32ToFp16<<< (MATRIX_M * MATRIX_K + 255) / 256, 256 >>> (mat1_dev, mat1_dev_fp32, MATRIX_M * MATRIX_K);
@@ -978,8 +976,7 @@ struct tableNode * hashJoin(struct joinNode *jNode, struct statistic *pp){
     cudaErrCheck(cudaEventRecord(startWMMA));
     wmma_example <<< gridDim, blockDim >>> (mat1_dev, mat2_dev, c_wmma, MATRIX_M, MATRIX_N, MATRIX_K, alpha, beta); 
     cudaErrCheck(cudaEventRecord(stopWMMA));
-    */
-
+    
     /*
     printf("Running with sgemm...\n");
     cudaErrCheck(cudaEventRecord(startcublas));
@@ -1034,58 +1031,58 @@ struct tableNode * hashJoin(struct joinNode *jNode, struct statistic *pp){
     //clock_gettime(CLOCK_REALTIME,&chkRes_end);
 
     // print time
-    //float wmmaTime;
+    float wmmaTime;
     //float cublasTime;
 
-    //cudaErrCheck(cudaEventSynchronize(stopWMMA));
+    cudaErrCheck(cudaEventSynchronize(stopWMMA));
     //cudaErrCheck(cudaEventSynchronize(stopcublasEX));
-    //cudaErrCheck(cudaEventElapsedTime(&wmmaTime, startWMMA, stopWMMA));
+    cudaErrCheck(cudaEventElapsedTime(&wmmaTime, startWMMA, stopWMMA));
     //cudaErrCheck(cudaEventElapsedTime(&cublasTime, startcublas, stopcublas));
 
-    //printf("wmma took %fms\n", wmmaTime);
+    printf("wmma took %fms\n", wmmaTime);
     //printf("cublas (FP32) took %fms\n", cublasTime);
     //cudaErrCheck(cudaEventElapsedTime(&cublasTime, startcublasEX, stopcublasEX));
     //printf("cublas tensor cores (FP16) took %fms\n", cublasTime);
 
     // free those data structures
-    //cudaErrCheck(cudaEventDestroy(startWMMA));
-    //cudaErrCheck(cudaEventDestroy(stopWMMA));
+    cudaErrCheck(cudaEventDestroy(startWMMA));
+    cudaErrCheck(cudaEventDestroy(stopWMMA));
     //cudaErrCheck(cudaEventDestroy(startcublasEX));
     //cudaErrCheck(cudaEventDestroy(stopcublasEX));
     //cudaErrCheck(cudaEventDestroy(startcublas));
     //cudaErrCheck(cudaEventDestroy(stopcublas));
 
-    //cudaErrCheck(cudaFree(mat1_dev));
-    //cudaErrCheck(cudaFree(mat2_dev));
-    //cudaErrCheck(cudaFree(c));
-    //cudaErrCheck(cudaFree(c_wmma));
+    cudaErrCheck(cudaFree(mat1_dev));
+    cudaErrCheck(cudaFree(mat2_dev));
+    cudaErrCheck(cudaFree(c));
+    cudaErrCheck(cudaFree(c_wmma));
     //cudaErrCheck(cudaFree(c_cublas));
     //cudaErrCheck(cudaFree(c_sgemm));
 
-    //free(matrix1);
-    //free(matrix2);
-    //free(mat1_fp16);
-    //free(mat2_fp16);
-    //free(mat1_fp32);
-    //free(mat2_fp32);
-    //free(c_host_wmma);
+    free(matrix1);
+    free(matrix2);
+    free(mat1_fp16);
+    free(mat2_fp16);
+    free(mat1_fp32);
+    free(mat2_fp32);
+    free(c_host_wmma);
     //free(c_host_cublas);
     //free(c_host_sgemm);
 
-    //clock_gettime(CLOCK_REALTIME, &tcu_end);
-    //double tcu_fill = (fill_end.tv_sec -  fill_start.tv_sec)* BILLION + fill_end.tv_nsec - fill_start.tv_nsec;
-    //double tcu_convert = (convert_end.tv_sec -  convert_start.tv_sec)* BILLION + convert_end.tv_nsec - convert_start.tv_nsec;
-    //double tcu_elapse = (tcu_end.tv_sec -  tcu_start.tv_sec)* BILLION + tcu_end.tv_nsec - tcu_start.tv_nsec;
-    //double init_elapse = (init_end.tv_sec -  init_start.tv_sec)* BILLION + init_end.tv_nsec - init_start.tv_nsec;
-    //double cuMemcpy_elapse = (cuMemcpy_end.tv_sec -  cuMemcpy_start.tv_sec)* BILLION + cuMemcpy_end.tv_nsec - cuMemcpy_start.tv_nsec;
+    clock_gettime(CLOCK_REALTIME, &tcu_end);
+    double tcu_fill = (fill_end.tv_sec -  fill_start.tv_sec)* BILLION + fill_end.tv_nsec - fill_start.tv_nsec;
+    double tcu_convert = (convert_end.tv_sec -  convert_start.tv_sec)* BILLION + convert_end.tv_nsec - convert_start.tv_nsec;
+    double tcu_elapse = (tcu_end.tv_sec -  tcu_start.tv_sec)* BILLION + tcu_end.tv_nsec - tcu_start.tv_nsec;
+    double init_elapse = (init_end.tv_sec -  init_start.tv_sec)* BILLION + init_end.tv_nsec - init_start.tv_nsec;
+    double cuMemcpy_elapse = (cuMemcpy_end.tv_sec -  cuMemcpy_start.tv_sec)* BILLION + cuMemcpy_end.tv_nsec - cuMemcpy_start.tv_nsec;
     //double chkRes_elapse = (chkRes_end.tv_sec -  chkRes_start.tv_sec)* BILLION + chkRes_end.tv_nsec - chkRes_start.tv_nsec;
     
-    //printf("Time to initialize: %lf\n", init_elapse/(1000*1000));
-    //printf("Time to fill matrices: %lf\n", tcu_fill/(1000*1000));
-    //printf("Time to convert data type: %lf\n", tcu_convert/(1000*1000));
-    //printf("Time for cudaMemcpy: %lf\n", cuMemcpy_elapse/(1000*1000));
+    printf("Time to initialize: %lf\n", init_elapse/(1000*1000));
+    printf("Time to fill matrices: %lf\n", tcu_fill/(1000*1000));
+    printf("Time to convert data type: %lf\n", tcu_convert/(1000*1000));
+    printf("Time for cudaMemcpy: %lf\n", cuMemcpy_elapse/(1000*1000));
     //printf("Time to check result: %lf\n", chkRes_elapse/(1000*1000));
-    //printf("NVIDIA lib overall MatMul_Agg Time: %lf\n", tcu_elapse/(1000*1000));
+    printf("NVIDIA lib overall MatMul_Agg Time: %lf\n", tcu_elapse/(1000*1000));
 
     // YDB hashJoin below this point
 

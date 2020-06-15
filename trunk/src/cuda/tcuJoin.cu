@@ -37,9 +37,9 @@
 using namespace nvcuda;
 
 // For wmma API, these must be multiples fo 16
-#define MATRIX_M 16
-#define MATRIX_N 16
-#define MATRIX_K 16
+#define MATRIX_M 256
+#define MATRIX_N 256
+#define MATRIX_K 256
 
 const int WMMA_M = 16;
 const int WMMA_N = 16;
@@ -71,6 +71,7 @@ void cublasErrCheck_(cublasStatus_t stat, const char *file, int line) {
 
 /* Map the table entires into matrix for tensor core to use 
  * Assum both matrix have the same dimension and the value in INT type for now, e.g., both 16x16 dim
+ * To support multiple types, this function need to be modified
  */
 __host__ void static fill_matrix(struct joinNode *jNode, int * matrix1, int * matrix2, int width,
         int attr_num1, int attr_num2, int attr_type1, int attr_type2) {
@@ -91,21 +92,21 @@ __host__ void static fill_matrix(struct joinNode *jNode, int * matrix1, int * ma
     int i, j; 
     for (i = 0; i < attr_num1; i++) {
         int left_col_idx = jNode->leftTable->attrIndex[i];
-        int k = 0; // k is row-index of the table
+        int k = 0; // k is row-index of the table (tupleNum index)
         
         for (j = 0; j < leftTupleNum * attr_type1; j+=attr_type1) {
+            int *temp;
+            temp = (int*)(&jNode->leftTable->content[i][j]);
             
             if (left_col_idx == 0) { // match to schema's i
-                mat1_i[k] = jNode->leftTable->content[i][j];
+                mat1_i[k] = *temp;
             }
             else if (left_col_idx == 1) { // match to schema's j
-                mat1_j[k] = jNode->leftTable->content[i][j];
+                mat1_j[k] = *temp;
             }
             else { // match to schema's val
                 // read 4 bytes at once because the type is int
-                int * tmp;
-                tmp = (int*)(&jNode->leftTable->content[i][j]);
-                mat1_val[k] = *tmp;
+                mat1_val[k] = *temp;
             }
             k++;
         }
@@ -117,17 +118,17 @@ __host__ void static fill_matrix(struct joinNode *jNode, int * matrix1, int * ma
         int k = 0;
         
         for (j = 0; j < rightTupleNum * attr_type2; j+=attr_type2) {
+            int *temp;
+            temp = (int*)(&jNode->leftTable->content[i][j]);
             
             if (right_col_idx == 0) {
-                mat2_i[k] = jNode->rightTable->content[i][j];
+                mat2_i[k] = *temp;
             }
             else if (right_col_idx == 1) {
-                mat2_j[k] = jNode->rightTable->content[i][j];
+                mat2_j[k] = *temp;
             }
             else {
-                int * tmp;
-                tmp = (int*)(&jNode->rightTable->content[i][j]);
-                mat2_val[k] = *tmp;
+                mat2_val[k] = *temp;
             }
             k++;
         }
@@ -318,6 +319,10 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp){
 
     matrix1 = (int*)calloc(MATRIX_M*MATRIX_K, sizeof(int));
     matrix2 = (int*)calloc(MATRIX_K*MATRIX_N, sizeof(int));
+    //matrix1 = (int*)malloc(sizeof(int)*MATRIX_M*MATRIX_K);
+    //matrix2 = (int*)malloc(sizeof(int)*MATRIX_K*MATRIX_N);
+    //memset(matrix1, 0, sizeof(int)*MATRIX_M*MATRIX_K);
+    //memset(matrix2, 0, sizeof(int)*MATRIX_K*MATRIX_N);
 
     mat1_fp16 = (half*)malloc(sizeof(half) * MATRIX_M * MATRIX_K);
     mat2_fp16 = (half*)malloc(sizeof(half) * MATRIX_K * MATRIX_N);
@@ -369,7 +374,7 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp){
     convertIntToFp32(mat1_fp32, matrix1, MATRIX_M);
     convertIntToFp32(mat2_fp32, matrix2, MATRIX_N);
     clock_gettime(CLOCK_REALTIME, &convert_end);
-    
+
     // print matrix for debugging
     //printf("Matrix 1:\n");
     //print_matrix(mat1_fp32, MATRIX_M);
@@ -389,10 +394,6 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp){
     cudaErrCheck(cudaMalloc((void**)&c_wmma, MATRIX_M * MATRIX_N * sizeof(float)));
     //cudaErrCheck(cudaMalloc((void**)&c_cublas, MATRIX_M * MATRIX_N * sizeof(float)));
     //cudaErrCheck(cudaMalloc((void**)&c_sgemm, MATRIX_M * MATRIX_N * sizeof(float)));
-
-    c_host_wmma = (float*)malloc(MATRIX_M * MATRIX_N * sizeof(float));
-    //c_host_cublas = (float*)malloc(MATRIX_M * MATRIX_N * sizeof(float));
-    //c_host_sgemm = (float*)malloc(MATRIX_M * MATRIX_N * sizeof(float));
 
     cudaErrCheck(cudaMemcpy(mat1_dev_fp32, mat1_fp32, sizeof(float) * MATRIX_M * MATRIX_K, cudaMemcpyHostToDevice));
     cudaErrCheck(cudaMemcpy(mat2_dev_fp32, mat2_fp32, sizeof(float) * MATRIX_K * MATRIX_N, cudaMemcpyHostToDevice));
@@ -498,6 +499,7 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp){
     free(mat1_fp32);
     free(mat2_fp32);
     free(c_host_wmma);
+
     //free(c_host_cublas);
     //free(c_host_sgemm);
 

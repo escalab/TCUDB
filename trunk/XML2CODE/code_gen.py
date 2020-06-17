@@ -832,7 +832,7 @@ def generate_code(tree):
             print >>fo, "extern struct tableNode* orderBy(struct orderByNode *, struct statistic *);"
             print >>fo, "extern char* materializeCol(struct materializeNode * mn, struct statistic *);"
         else: # joinType == 2
-            print >>fo, "extern struct tableNode* tcuJoin(struct joinNode *, struct statistic *);"
+            print >>fo, "extern struct tableNode* tcuJoin(struct joinNode *, struct statistic *, int *);"
 
     else:              
         print >>fo, "#include <CL/cl.h>"
@@ -887,10 +887,13 @@ def generate_code(tree):
 
     print >>fo, "\tint table;"
     print >>fo, "\tint long_index;"
+    print >>fo, "\tint matrix_dim;"
+    print >>fo, "\tint *matrix_dim_ptr = &matrix_dim;"
     print >>fo, "\tchar path[PATH_MAX];"
     print >>fo, "\tint setPath = 0;"
     print >>fo, "\tstruct option long_options[] = {"
-    print >>fo, "\t\t{\"datadir\",required_argument,0,'0'}"
+    print >>fo, "\t\t{\"datadir\",required_argument,0,'0'},"
+    print >>fo, "\t\t{\"matrix_dim\",required_argument,0,'1'}"
     print >>fo, "\t};\n"
 
     print >>fo, "\twhile((table=getopt_long(argc,argv,\"\",long_options,&long_index))!=-1){"
@@ -899,7 +902,15 @@ def generate_code(tree):
     print >>fo, "\t\t\t\tsetPath = 1;"
     print >>fo, "\t\t\t\tstrcpy(path,optarg);"
     print >>fo, "\t\t\t\tbreak;"
+    print >>fo, "\t\t\tcase '1':"
+    print >>fo, "\t\t\t\t*matrix_dim_ptr = atoi(optarg);"
+    print >>fo, "\t\t\t\tbreak;"
     print >>fo, "\t\t}"
+    print >>fo, "\t}\n"
+
+    print >>fo, "\tif(path == NULL || *matrix_dim_ptr == 0){"
+    print >>fo, "\t\tprintf(\"Mandatory argument(s) missing, e.g. --datadir, --matrix_dim\\n\");"
+    print >>fo, "\t\texit(1);"
     print >>fo, "\t}\n"
 
     print >>fo, "\tif(setPath == 1)"
@@ -2340,9 +2351,9 @@ def generate_code(tree):
             print >>fo, "\t\t" + jName + ".leftKeyIndex = " + str(joinAttr.factIndex[i]) + ";"
 
             if CODETYPE == 0:
-                print >>fo, "\t\tstruct tableNode *join" + str(i) + " = tcuJoin(&" + jName + ",&pp);\n"
+                print >>fo, "\t\tstruct tableNode *join" + str(i) + " = tcuJoin(&" + jName + ",&pp, matrix_dim_ptr);\n"
             else:
-                print >>fo, "\t\tstruct tableNode *join" + str(i) + " = tcuJoin(&" + jName + ", &context, &pp);\n" 
+                print >>fo, "\t\tstruct tableNode *join" + str(i) + " = tcuJoin(&" + jName + ", &context, &pp, &*matrix_dim_ptr);\n" 
 
             factName = "join" + str(i)
 

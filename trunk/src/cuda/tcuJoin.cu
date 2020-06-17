@@ -37,9 +37,9 @@
 using namespace nvcuda;
 
 // For wmma API, these must be multiples fo 16
-#define MATRIX_M 256
-#define MATRIX_N 256
-#define MATRIX_K 256
+//#define MATRIX_M 16
+//#define MATRIX_N 16
+//#define MATRIX_K 16
 
 const int WMMA_M = 16;
 const int WMMA_N = 16;
@@ -119,7 +119,7 @@ __host__ void static fill_matrix(struct joinNode *jNode, int * matrix1, int * ma
         
         for (j = 0; j < rightTupleNum * attr_type2; j+=attr_type2) {
             int *temp;
-            temp = (int*)(&jNode->leftTable->content[i][j]);
+            temp = (int*)(&jNode->rightTable->content[i][j]);
             
             if (right_col_idx == 0) {
                 mat2_i[k] = *temp;
@@ -268,9 +268,11 @@ __global__ void wmma_example(half *a, half *b, float *c, int M, int N, int K, fl
  * Output:
  *  A new table node
  */
-struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp){
+struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *matrix_dim){
 
-    printf("Call from tcuJoin.cu\n");
+    //printf("matrix_dim: %d\n", *matrix_dim);
+    int MATRIX_M, MATRIX_N, MATRIX_K;
+    MATRIX_M = MATRIX_N = MATRIX_K = *matrix_dim;
     
     struct timespec tcu_start, tcu_end;
     struct timespec init_start, init_end;

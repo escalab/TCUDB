@@ -34,6 +34,7 @@ Several configurable variables:
     @SOA is currently for testing only.
 """
 
+#joinType = 0    
 joinType = 2    
 POS = 0
 CODETYPE = 0

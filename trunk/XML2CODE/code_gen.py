@@ -887,13 +887,17 @@ def generate_code(tree):
 
     print >>fo, "\tint table;"
     print >>fo, "\tint long_index;"
-    print >>fo, "\tint matrix_dim;"
-    print >>fo, "\tint *matrix_dim_ptr = &matrix_dim;"
+    if joinType == 2:
+        print >>fo, "\tint matrix_dim;"
+        print >>fo, "\tint *matrix_dim_ptr = &matrix_dim;"
     print >>fo, "\tchar path[PATH_MAX];"
     print >>fo, "\tint setPath = 0;"
     print >>fo, "\tstruct option long_options[] = {"
-    print >>fo, "\t\t{\"datadir\",required_argument,0,'0'},"
-    print >>fo, "\t\t{\"matrix_dim\",required_argument,0,'1'}"
+    if joinType == 2:
+        print >>fo, "\t\t{\"datadir\",required_argument,0,'0'},"
+        print >>fo, "\t\t{\"matrix_dim\",required_argument,0,'1'}"
+    else:
+        print >>fo, "\t\t{\"datadir\",required_argument,0,'0'}"
     print >>fo, "\t};\n"
 
     print >>fo, "\twhile((table=getopt_long(argc,argv,\"\",long_options,&long_index))!=-1){"
@@ -902,14 +906,21 @@ def generate_code(tree):
     print >>fo, "\t\t\t\tsetPath = 1;"
     print >>fo, "\t\t\t\tstrcpy(path,optarg);"
     print >>fo, "\t\t\t\tbreak;"
-    print >>fo, "\t\t\tcase '1':"
-    print >>fo, "\t\t\t\t*matrix_dim_ptr = atoi(optarg);"
-    print >>fo, "\t\t\t\tbreak;"
+    if joinType == 2:
+        print >>fo, "\t\t\tcase '1':"
+        print >>fo, "\t\t\t\t*matrix_dim_ptr = atoi(optarg);"
+        print >>fo, "\t\t\t\tbreak;"
     print >>fo, "\t\t}"
     print >>fo, "\t}\n"
 
-    print >>fo, "\tif(path == NULL || *matrix_dim_ptr == 0){"
-    print >>fo, "\t\tprintf(\"Mandatory argument(s) missing, e.g. --datadir, --matrix_dim\\n\");"
+    if joinType == 2:
+        print >>fo, "\tif(path == NULL || *matrix_dim_ptr == 0){"
+        print >>fo, "\t\tprintf(\"Mandatory argument(s) missing, e.g. --datadir, --matrix_dim\\n\");"
+        print >>fo, "\t\texit(1);"
+        print >>fo, "\t}\n"
+
+    print >>fo, "\tif(path == NULL){"
+    print >>fo, "\t\tprintf(\"Mandatory argument missing, e.g. --datadir\\n\");"
     print >>fo, "\t\texit(1);"
     print >>fo, "\t}\n"
 

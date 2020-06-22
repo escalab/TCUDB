@@ -833,6 +833,7 @@ def generate_code(tree):
             print >>fo, "extern char* materializeCol(struct materializeNode * mn, struct statistic *);"
         else: # joinType == 2
             print >>fo, "extern struct tableNode* tcuJoin(struct joinNode *, struct statistic *, int *);"
+            print >>fo, "extern struct tableNode* groupBy(struct groupByNode *,struct statistic *);"
 
     else:              
         print >>fo, "#include <CL/cl.h>"
@@ -2430,8 +2431,9 @@ def generate_code(tree):
                 print >>fo, "\t\tdiskTotal += (diskEnd.tv_sec -  diskStart.tv_sec)* BILLION + diskEnd.tv_nsec - diskStart.tv_nsec;"
 
         print >>fo, "\t}\n"
-    # TCU does not require additional aggregation.
-    if joinType == 0 or joinType == 1: 
+
+    # tcuJoin also requires gbNode for output ranking
+    if joinType == 0 or joinType == 1 or joinType == 2: 
         if len(aggNode) >0 :
             """
             Generate codes for aggregation node.

@@ -33,6 +33,7 @@
 #include <curand.h>
 #include <mma.h>
 #include <cublas_v2.h>
+#include "../include/uthash.h"
 
 using namespace nvcuda;
 
@@ -53,6 +54,14 @@ void cudaErrCheck_(cudaError_t stat, const char *file, int line) {
         fprintf(stderr, "CUDA Error: %s %s %d\n", cudaGetErrorString(stat), file, line);
     }
 }
+
+typedef struct gb_hash {
+    int left_col_idx;                    /* key */
+    struct gb_hash *right_col_idx;
+    int val;
+    UT_hash_handle hh;         /* makes this structure hashable */
+} gb_hash_t;
+
 /*
 #define curandErrCheck(stat) { curandErrCheck_((stat), __FILE__, __LINE__); }
 void curandErrCheck_(curandStatus_t stat, const char *file, int line) {
@@ -152,6 +161,17 @@ __host__ void static fill_matrix(struct joinNode *jNode, int * matrix1, int * ma
     free(mat2_val);
 }
 
+__host__ void static verify_result(float * matrix, int width) { // correct!
+
+    int i;
+    for (i = 0; i < width*width; i++) {
+        //printf("%d\t", matrix[i]);
+        printf("%.2f\t", matrix[i]);
+        if ((i+1) % width == 0)
+          printf("\n");  
+    }
+
+}
 /* Printf matrix for debugging */
 //__host__ void static print_matrix(int * matrix, int width) {
 //__host__ void static print_matrix(float * matrix, int width) { // correct!
@@ -268,9 +288,36 @@ __global__ void wmma_example(half *a, half *b, float *c, int M, int N, int K, fl
  * Output:
  *  A new table node
  */
-struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *matrix_dim){
+struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *matrix_dim, struct groupByNode *gbNode){
 
-    //printf("matrix_dim: %d\n", *matrix_dim);
+    printf("groupByColNum: %d\n", gbNode->groupByColNum);
+    // currently only support 2 groupBy index
+    int leftGbIdx = gbNode->groupByIndex[0];
+    int rightGbIdx = gbNode->groupByIndex[1];
+    printf("left groupBy index: %d\n", leftGbIdx);
+    printf("right groupBy index: %d\n", rightGbIdx);
+
+    gb_hash_t *gb = NULL;
+
+    gb_hash_t *item1, *item2, *tmp1, *tmp2;
+    // test 
+    gb_hash_t *i = (gb_hash_t*)malloc(sizeof(gb_hash_t));
+    i->left_col_idx = 0;
+    i->right_col_idx = NULL;
+    i->val = 24;
+    HASH_ADD_INT(gb, left_col_idx, i);
+    gb_hash_t *s = (gb_hash_t*)malloc(sizeof(gb_hash_t));
+    s->left_col_idx = 87;
+    s->right_col_idx = NULL;
+    s->val = 13;
+    HASH_ADD_INT(i->right_col_idx, left_col_idx, s);
+
+    HASH_ITER(hh, gb, item1, tmp1) {
+        HASH_ITER(hh, item1->right_col_idx, item2, tmp2) {
+            printf("$items{%d}{%d} = %d\n", item1->left_col_idx, item2->left_col_idx, item2->val);
+        }
+    }
+
     int MATRIX_M, MATRIX_N, MATRIX_K;
     MATRIX_M = MATRIX_N = MATRIX_K = *matrix_dim;
     
@@ -436,7 +483,10 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
     //struct timespec chkRes_start, chkRes_end;
     //clock_gettime(CLOCK_REALTIME,&chkRes_start);
     // Copy result back to the host for error checking
-    //cudaErrCheck(cudaMemcpy(c_host_wmma, c_wmma, MATRIX_M * MATRIX_N * sizeof(float), cudaMemcpyDeviceToHost));
+    cudaErrCheck(cudaMemcpy(c_host_wmma, c_wmma, MATRIX_M * MATRIX_N * sizeof(float), cudaMemcpyDeviceToHost));
+
+    //verify_result(c_host_wmma, MATRIX_M);
+
     //cudaErrCheck(cudaMemcpy(c_host_cublas, c_cublas, MATRIX_M * MATRIX_N * sizeof(float), cudaMemcpyDeviceToHost));
     //cudaErrCheck(cudaMemcpy(c_host_sgemm, c_sgemm, MATRIX_M * MATRIX_N * sizeof(float), cudaMemcpyDeviceToHost));
 

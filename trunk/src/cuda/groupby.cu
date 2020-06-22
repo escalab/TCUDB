@@ -68,7 +68,7 @@ __global__ static void build_groupby_key(char ** content, int gbColNum, int * gb
         }
         int hkey = StringHash(buf) % HSIZE;
         key[i]= hkey;
-        num[hkey] = 1;
+        num[hkey] = 1; // gb count +1
         atomicAdd(&(groupNum[hkey]), 1);
     }
 }

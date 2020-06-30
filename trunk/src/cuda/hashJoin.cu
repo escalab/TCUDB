@@ -226,6 +226,9 @@ __global__ static void count_join_result2(int* num, int* psum, char* bucket, cha
     int stride = blockDim.x * gridDim.x;
     long offset = blockIdx.x*blockDim.x + threadIdx.x;
 
+    //printf("left tuple#: %d\n", (int)inNum);
+    //printf("right tuple#: %d\n", right_tupleNum);
+
     for (int i = offset; i < inNum; i += stride) {
         int fkey = ((int *)(fact))[i];
         int hkey = fkey &(hsize-1);
@@ -236,19 +239,20 @@ __global__ static void count_join_result2(int* num, int* psum, char* bucket, cha
             int pSum = psum[hkey];
             int dimKey = ((int *)(bucket))[2*j + 2*pSum];
 
-            // NOTE: i -- left table row id; dimId -- right table row id
-            if (dimKey == fkey) { // matched tuple
+            // NOTE: i -- left (fact) table row number; dimId -- right (dim) table row number
+            if (dimKey == fkey) { // check whether the tuple match WHERE condition
                 int dimId = ((int *)(bucket))[2*j + 2*pSum + 1];
                 dimId = dimId-1; // dirty fix for now, build_hash_table increase dimId by 1
 
                 lcount ++;
                 fvalue = dimId;
-                newFactFilter[i*right_tupleNum+fvalue] = 1;
-                //printf("FactFilter index: %d\tleft: %d\tright: %d\n", (i*right_tupleNum+fvalue),i,dimId);
+
+                newFactFilter[i*right_tupleNum+fvalue] = 1; // fact_tupleIndex*dim_tuple_num+dim_tupleIndex
+                // make sure we can store duplicate tuples without replacing the previous matched tuple
             }
         }
 
-        factFilter[i] = fvalue; // orig code
+        //factFilter[i] = fvalue; // orig code
         // values are used by joinFact_int function
     }
 
@@ -415,7 +419,7 @@ __global__ void static joinFact_other(int *resPsum, char * fact,  int attrSize, 
 }
 
 // fact table -> left table
-__global__ void static joinFact_int(int *resPsum, char * fact,  int attrSize, long  num, int * filter, char * result, int right_tupleNum){
+__global__ void static joinFact_int2(int *resPsum, char * fact,  int attrSize, long  num, int * filter, char * result, int right_tupleNum){
 
     int startIndex = blockIdx.x*blockDim.x + threadIdx.x;
     int stride = blockDim.x * gridDim.x;
@@ -423,6 +427,7 @@ __global__ void static joinFact_int(int *resPsum, char * fact,  int attrSize, lo
 
     for (int i = startIndex; i < (int) num; i += stride) {
         for (int j = 0; j < right_tupleNum; j++) {
+            // judge if there is a matched tuple from newFactFilter, val==1 means match, localCount+=1
             if (filter[i*right_tupleNum+j] != 0) {
                 ((int*)result)[localCount] = ((int *)fact)[i];
                 //printf("fact_row#: %d\tdim_row#: %d\tfact_val: %d\n", i, j, ((int *)fact)[i]);
@@ -442,6 +447,20 @@ __global__ void static joinFact_int(int *resPsum, char * fact,  int attrSize, lo
     }*/
 }
 
+__global__ void static joinFact_int(int *resPsum, char * fact,  int attrSize, long  num, int * filter, char * result){
+
+    int startIndex = blockIdx.x*blockDim.x + threadIdx.x;
+    int stride = blockDim.x * gridDim.x;
+    long localCount = resPsum[startIndex];
+    
+    // orig code: assume each row only match once
+    for(long i=startIndex;i<num;i+=stride){
+        if(filter[i] != 0){
+            ((int*)result)[localCount] = ((int *)fact)[i];
+            localCount ++;
+        }
+    }
+}
 __global__ void static joinDim_rle(int *resPsum, char * dim, int attrSize, long tupleNum, int * filter, char * result){
 
     int startIndex = blockIdx.x*blockDim.x + threadIdx.x;
@@ -505,7 +524,7 @@ __global__ void static joinDim_dict_int(int *resPsum, char * dim, struct dictHea
 }
 
 // dimension table -> right table
-__global__ void static joinDim_int(int *resPsum, char * dim, int attrSize, long num,int * filter, char * result, int right_tupleNum){
+__global__ void static joinDim_int2(int *resPsum, char * dim, int attrSize, long num,int * filter, char * result, int right_tupleNum){
 
     int startIndex = blockIdx.x*blockDim.x + threadIdx.x;
     int stride = blockDim.x * gridDim.x;
@@ -533,6 +552,24 @@ __global__ void static joinDim_int(int *resPsum, char * dim, int attrSize, long 
     }*/
 }
 
+__global__ void static joinDim_int(int *resPsum, char * dim, int attrSize, long num,int * filter, char * result){
+
+    int startIndex = blockIdx.x*blockDim.x + threadIdx.x;
+    int stride = blockDim.x * gridDim.x;
+    long localCount = resPsum[startIndex];
+
+    
+    // orig code   
+    for(long i=startIndex;i<num;i+=stride){
+        int dimId = filter[i];
+        //printf("dimId: %d\n", dimId);
+        if( dimId != 0){
+            ((int*)result)[localCount] = ((int*)dim)[dimId-1];
+            //printf(" <= joinDim_int val: \t\t%d\n", ((int *)dim)[dimId-1]);
+            localCount ++;
+        }
+    }
+}
 __global__ void static joinDim_other(int *resPsum, char * dim, int attrSize, long num,int * filter, char * result){
 
     int startIndex = blockIdx.x*blockDim.x + threadIdx.x;
@@ -1101,6 +1138,7 @@ struct tableNode * hashJoin(struct joinNode *jNode, struct statistic *pp){
 
     CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&gpu_psum,hsize*sizeof(int)));
     CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void **)&gpu_bucket, 2*primaryKeySize));
+    //printf("primaryKeySize: %d\n", primaryKeySize);
     CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&gpu_psum1,hsize*sizeof(int)));
 
     int dataPos = jNode->rightTable->dataPos[jNode->rightKeyIndex];
@@ -1142,7 +1180,10 @@ struct tableNode * hashJoin(struct joinNode *jNode, struct statistic *pp){
 
     long foreignKeySize = jNode->leftTable->attrTotalSize[jNode->leftKeyIndex];
     long filterSize = jNode->leftTable->attrSize[jNode->leftKeyIndex] * jNode->leftTable->tupleNum;
-    long newSize = jNode->rightTable->tupleNum * jNode->leftTable->tupleNum; // worst case is all matched
+    //printf("left attrSize: %d\n", jNode->leftTable->attrSize[jNode->leftKeyIndex]);
+    //printf("left keyIndex: %d\n", jNode->leftKeyIndex);
+    long newSize = jNode->rightTable->tupleNum * jNode->leftTable->tupleNum * sizeof(int); // worst case is all matched
+    //printf("newSize: %d\n", (int)newSize);
     int right_tupleNum = jNode->rightTable->tupleNum;
 
     if(dataPos == MEM || dataPos == MMAP || dataPos == PINNED){
@@ -1155,8 +1196,10 @@ struct tableNode * hashJoin(struct joinNode *jNode, struct statistic *pp){
 
     CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void **)&gpuFactFilter,filterSize));
     CUDA_SAFE_CALL_NO_SYNC(cudaMemset(gpuFactFilter,0,filterSize));
+    //printf("gpuFactFilter: %d\n", filterSize);
 
     CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void **)&newFactFilter,newSize));
+    //printf("newFactFilter: %d\n", newSize);
     CUDA_SAFE_CALL_NO_SYNC(cudaMemset(newFactFilter,0,newSize));
 
     if(format == UNCOMPRESSED) {
@@ -1205,11 +1248,14 @@ struct tableNode * hashJoin(struct joinNode *jNode, struct statistic *pp){
 
     int tmp1, tmp2;
 
+    // gpu_count result come from count_join_result
     CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(&tmp1,&gpu_count[threadNum-1],sizeof(int),cudaMemcpyDeviceToHost));
     scanImpl(gpu_count,threadNum,gpu_resPsum, pp);
     CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(&tmp2,&gpu_resPsum[threadNum-1],sizeof(int),cudaMemcpyDeviceToHost));
 
     res->tupleNum = tmp1 + tmp2;
+    //printf("tmp1: %d\n", tmp1); // 0
+    //printf("tmp2: %d\n", tmp2);
     printf("[INFO]Number of join results: %d\n",res->tupleNum);
 
     if(dataPos == MEM || dataPos == MMAP || dataPos == PINNED){
@@ -1290,7 +1336,7 @@ struct tableNode * hashJoin(struct joinNode *jNode, struct statistic *pp){
                 }
 
                 if(attrSize == sizeof(int))
-                    joinFact_int<<<grid,block>>>(gpu_resPsum,gpu_fact, attrSize, jNode->leftTable->tupleNum,newFactFilter,gpu_result, right_tupleNum);
+                    joinFact_int2<<<grid,block>>>(gpu_resPsum,gpu_fact, attrSize, jNode->leftTable->tupleNum,newFactFilter,gpu_result, right_tupleNum);
                     //joinFact_int<<<grid,block>>>(gpu_resPsum,gpu_fact, attrSize, jNode->leftTable->tupleNum,gpuFactFilter,gpu_result);
                 else
                     joinFact_other<<<grid,block>>>(gpu_resPsum,gpu_fact, attrSize, jNode->leftTable->tupleNum,gpuFactFilter,gpu_result);
@@ -1339,7 +1385,7 @@ struct tableNode * hashJoin(struct joinNode *jNode, struct statistic *pp){
 
                 unpack_rle<<<grid,block>>>(gpu_fact, gpuRle,jNode->leftTable->tupleNum, dNum);
 
-                joinFact_int<<<grid,block>>>(gpu_resPsum,gpuRle, attrSize, jNode->leftTable->tupleNum,gpuFactFilter,gpu_result, newSize);
+                joinFact_int<<<grid,block>>>(gpu_resPsum,gpuRle, attrSize, jNode->leftTable->tupleNum,gpuFactFilter,gpu_result);
 
                 CUDA_SAFE_CALL_NO_SYNC(cudaFree(gpuRle));
 
@@ -1356,7 +1402,7 @@ struct tableNode * hashJoin(struct joinNode *jNode, struct statistic *pp){
                 }
 
                 if(attrType == sizeof(int))
-                    joinDim_int<<<grid,block>>>(gpu_resPsum,gpu_fact, attrSize, jNode->leftTable->tupleNum, newFactFilter,gpu_result,jNode->rightTable->tupleNum);
+                    joinDim_int2<<<grid,block>>>(gpu_resPsum,gpu_fact, attrSize, jNode->leftTable->tupleNum, newFactFilter,gpu_result,jNode->rightTable->tupleNum);
                     //joinDim_int<<<grid,block>>>(gpu_resPsum,gpu_fact, attrSize, jNode->leftTable->tupleNum, gpuFactFilter,gpu_result);
                 else
                     joinDim_other<<<grid,block>>>(gpu_resPsum,gpu_fact, attrSize, jNode->leftTable->tupleNum, gpuFactFilter,gpu_result);

@@ -742,67 +742,6 @@ __host__ void static convertIntToFp32(float *out, int *in, int width) {
     }
 }
 
-/* Performs an MxNxK GEMM (C=alpha*A*B + beta*C) assuming:
-   1) Matrices are packed in memory.
-   2) M, N and K are multiples of 16.
-   3) Neither A nor B are transposed.
-
- */
-/*
-__global__ void wmma_example(half *a, half *b, float *c, int M, int N, int K, float alpha, float beta) {
-    // Leading dimensions. Packed with no transpositions.
-    int lda = M;
-    int ldb = K;
-    int ldc = M;
-
-    // Tile using a 2D grid
-    int warpM = (blockIdx.x * blockDim.x + threadIdx.x) / warpSize;
-    int warpN = (blockIdx.y * blockDim.y + threadIdx.y);
-
-    // Declare the fragments
-    wmma::fragment<wmma::matrix_a, WMMA_M, WMMA_N, WMMA_K, half, wmma::col_major> a_frag;
-    wmma::fragment<wmma::matrix_b, WMMA_M, WMMA_N, WMMA_K, half, wmma::col_major> b_frag;
-    wmma::fragment<wmma::accumulator, WMMA_M, WMMA_N, WMMA_K, float> acc_frag;
-    wmma::fragment<wmma::accumulator, WMMA_M, WMMA_N, WMMA_K, float> c_frag;
-
-    wmma::fill_fragment(acc_frag, 0.0f);
-
-    // Loop over k
-    for (int i = 0; i < K; i += WMMA_K) {
-        int aRow = warpM * WMMA_M;
-        int aCol = i;
-
-        int bRow = i;
-        int bCol = warpN * WMMA_N;
-
-        // Bounds checking
-        if (aRow < M && aCol < K && bRow < K && bCol < N) { 
-            // Load the inputs
-            wmma::load_matrix_sync(a_frag, a + aRow + aCol * lda, lda);
-            wmma::load_matrix_sync(b_frag, b + bRow + bCol * ldb, ldb);
-
-            // Perform the matrix multiplication
-            wmma::mma_sync(acc_frag, a_frag, b_frag, acc_frag);
-        }
-
-    }
-
-    // Load in the current value of c, scale it by beta, and add this our result scaled by alpha
-    int cRow = warpM * WMMA_M;
-    int cCol = warpN * WMMA_N;
-
-    if (cRow < M && cCol < N) {
-        wmma::load_matrix_sync(c_frag, c + cRow + cCol * ldc, ldc, wmma::mem_col_major);
-
-        for(int i=0; i < c_frag.num_elements; i++) {
-            c_frag.x[i] = alpha * acc_frag.x[i] + beta * c_frag.x[i];
-        }
-
-        // Store the output
-        wmma::store_matrix_sync(c + cRow + cCol * ldc, c_frag, ldc, wmma::mem_col_major);
-    }
-}
-*/
 
 /*
  * hashJoin implements the foreign key join between a fact table and dimension table.
@@ -842,19 +781,6 @@ struct tableNode * hashJoin(struct joinNode *jNode, struct statistic *pp){
     else
         grid = defaultBlock;
 
-/*
-    // For WMMA
-    dim3 gridDim;
-    dim3 blockDim;
-    // blockDim.x must be a multple of warpSize
-    // 128x4 means we have 16 warps and a block computes a 64x64 output tile
-    blockDim.x = 128;
-    blockDim.y = 4;
-
-    gridDim.x = (MATRIX_M + (WMMA_M * blockDim.x / 32 - 1)) / (WMMA_M * blockDim.x / 32);
-    gridDim.y = (MATRIX_N + WMMA_N * blockDim.y - 1) / (WMMA_N * blockDim.y);
-*/
-
     res = (struct tableNode*) malloc(sizeof(struct tableNode));
     CHECK_POINTER(res);
     // get data from jNode tableNode
@@ -875,14 +801,17 @@ struct tableNode * hashJoin(struct joinNode *jNode, struct statistic *pp){
     res->content = (char **) malloc(res->totalAttr * sizeof(char *));
     CHECK_POINTER(res->content);
 
+    printf("leftOutputAttrNum: %d\n", jNode->leftOutputAttrNum);
     for(int i=0;i<jNode->leftOutputAttrNum;i++){
         int pos = jNode->leftPos[i];
         res->attrType[pos] = jNode->leftOutputAttrType[i];
         int index = jNode->leftOutputIndex[i];
+        printf("left index: %d\n", index);
         res->attrSize[pos] = jNode->leftTable->attrSize[index];
         res->dataFormat[pos] = UNCOMPRESSED;
     }
 
+    printf("rightOutputAttrNum: %d\n", jNode->rightOutputAttrNum);
     for(int i=0;i<jNode->rightOutputAttrNum;i++){
         int pos = jNode->rightPos[i];
         res->attrType[pos] = jNode->rightOutputAttrType[i];
@@ -907,254 +836,6 @@ struct tableNode * hashJoin(struct joinNode *jNode, struct statistic *pp){
 /*
  *  build hash table on GPU
  */
-    /*
-    struct timespec tcu_start, tcu_end;
-    struct timespec init_start, init_end;
-    clock_gettime(CLOCK_REALTIME, &tcu_start);
-    clock_gettime(CLOCK_REALTIME, &init_start);
-
-    int *matrix1;
-    int *matrix2;
-
-    half *mat1_fp16;
-    half *mat2_fp16;
-    float *mat1_fp32;
-    float *mat2_fp32;
-
-    // on GPU device
-    half *mat1_dev;
-    half *mat2_dev;
-    float *mat1_dev_fp32;
-    float *mat2_dev_fp32;
-    float *c;
-
-    float *c_wmma;
-    //float *c_cublas;
-    //float *c_sgemm; // single precision
-
-    // for error checking
-    float *c_host_wmma;
-    //float *c_host_cublas;
-    //float *c_host_sgemm;
-
-    // wmma parameters
-    // C = alpha*A*B + beta*C  
-    float alpha = 1.0f;
-    float beta = 0.0f;
-
-    // For WMMA
-    dim3 gridDim;
-    dim3 blockDim;
-    // blockDim.x must be a multple of warpSize
-    // 128x4 means we have 16 warps and a block computes a 64x64 output tile
-    blockDim.x = 128;
-    blockDim.y = 4;
-
-    gridDim.x = (MATRIX_M + (WMMA_M * blockDim.x / 32 - 1)) / (WMMA_M * blockDim.x / 32);
-    gridDim.y = (MATRIX_N + WMMA_N * blockDim.y - 1) / (WMMA_N * blockDim.y);
-
-    matrix1 = (int*)calloc(MATRIX_M*MATRIX_K, sizeof(int));
-    matrix2 = (int*)calloc(MATRIX_K*MATRIX_N, sizeof(int));
-
-    mat1_fp16 = (half*)malloc(sizeof(half) * MATRIX_M * MATRIX_K);
-    mat2_fp16 = (half*)malloc(sizeof(half) * MATRIX_K * MATRIX_N);
-    mat1_fp32 = (float*)malloc(sizeof(float) * MATRIX_M * MATRIX_K);
-    mat2_fp32 = (float*)malloc(sizeof(float) * MATRIX_K * MATRIX_N);
-
-    //curandGenerator_t gen;
-    //cublasHandle_t cublasHandle;         // tcu
-    //cublasHandle_t cublasHandle_default; // cublas default
-
-    cudaEvent_t startWMMA;
-    cudaEvent_t stopWMMA;
-    //cudaEvent_t startcublasEX;
-    //cudaEvent_t stopcublasEX;
-    //cudaEvent_t startcublas; // for sgemm
-    //cudaEvent_t stopcublas;
-
-    cudaErrCheck(cudaEventCreate(&startWMMA));
-    cudaErrCheck(cudaEventCreate(&stopWMMA)); 
-    //cudaErrCheck(cudaEventCreate(&startcublasEX));
-    //cudaErrCheck(cudaEventCreate(&stopcublasEX));
-    //cudaErrCheck(cudaEventCreate(&startcublas));
-    //cudaErrCheck(cudaEventCreate(&stopcublas));
-
-    // use tensor core or cublas
-    //cublasErrCheck(cublasCreate(&cublasHandle));
-    //cublasErrCheck(cublasCreate(&cublasHandle_default));
-
-    // enable tensor core
-    //cublasErrCheck(cublasSetMathMode(cublasHandle, CUBLAS_TENSOR_OP_MATH));
-    //cublasErrCheck(cublasSetMathMode(cublasHandle_default, CUBLAS_DEFAULT_MATH));
-
-    c_host_wmma = (float*)malloc(MATRIX_M * MATRIX_N * sizeof(float));
-    //c_host_cublas = (float*)malloc(MATRIX_M * MATRIX_N * sizeof(float));
-    //c_host_sgemm = (float*)malloc(MATRIX_M * MATRIX_N * sizeof(float));
-
-    clock_gettime(CLOCK_REALTIME, &init_end);
-
-    // fill matrices from jNode by mapping inputs into 1D array
-    struct timespec fill_start, fill_end, convert_start, convert_end;
-    struct timespec cuMemcpy_start, cuMemcpy_end;
-    clock_gettime(CLOCK_REALTIME, &fill_start);
-    fill_matrix(jNode, matrix1, matrix2, MATRIX_M, 
-            jNode->leftTable->totalAttr, jNode->rightTable->totalAttr, jNode->leftTable->attrType[0], jNode->rightTable->attrType[0]);
-    clock_gettime(CLOCK_REALTIME, &fill_end);
-
-    clock_gettime(CLOCK_REALTIME, &convert_start);
-    // convert to half type for wmma API
-    convertIntToFp32(mat1_fp32, matrix1, MATRIX_M);
-    convertIntToFp32(mat2_fp32, matrix2, MATRIX_N);
-    clock_gettime(CLOCK_REALTIME, &convert_end);
-    */
-    // print matrix for debugging
-    //printf("Matrix 1:\n");
-    //print_matrix(mat1_fp32, MATRIX_M);
-    //printf("Matrix 2:\n");
-    //print_matrix(mat2_fp32, MATRIX_M);
-    
-
-    // copy data to device for computation
-    /*
-    clock_gettime(CLOCK_REALTIME, &cuMemcpy_start);
-    cudaErrCheck(cudaMalloc((void**)&mat1_dev, MATRIX_M * MATRIX_K * sizeof(half)));
-    cudaErrCheck(cudaMalloc((void**)&mat2_dev, MATRIX_K * MATRIX_N * sizeof(half)));
-    cudaErrCheck(cudaMalloc((void**)&mat1_dev_fp32, MATRIX_M * MATRIX_K * sizeof(float)));
-    cudaErrCheck(cudaMalloc((void**)&mat2_dev_fp32, MATRIX_K * MATRIX_N * sizeof(float)));
-
-    cudaErrCheck(cudaMalloc((void**)&c, MATRIX_M * MATRIX_N * sizeof(float)));
-
-    cudaErrCheck(cudaMalloc((void**)&c_wmma, MATRIX_M * MATRIX_N * sizeof(float)));
-    //cudaErrCheck(cudaMalloc((void**)&c_cublas, MATRIX_M * MATRIX_N * sizeof(float)));
-    //cudaErrCheck(cudaMalloc((void**)&c_sgemm, MATRIX_M * MATRIX_N * sizeof(float)));
-
-    c_host_wmma = (float*)malloc(MATRIX_M * MATRIX_N * sizeof(float));
-    //c_host_cublas = (float*)malloc(MATRIX_M * MATRIX_N * sizeof(float));
-    //c_host_sgemm = (float*)malloc(MATRIX_M * MATRIX_N * sizeof(float));
-    */
-    /*
-    cudaErrCheck(cudaMemcpy(mat1_dev_fp32, mat1_fp32, sizeof(float) * MATRIX_M * MATRIX_K, cudaMemcpyHostToDevice));
-    cudaErrCheck(cudaMemcpy(mat2_dev_fp32, mat2_fp32, sizeof(float) * MATRIX_K * MATRIX_N, cudaMemcpyHostToDevice));
-    convertFp32ToFp16<<< (MATRIX_M * MATRIX_K + 255) / 256, 256 >>> (mat1_dev, mat1_dev_fp32, MATRIX_M * MATRIX_K);
-    convertFp32ToFp16<<< (MATRIX_K * MATRIX_N + 255) / 256, 256 >>> (mat2_dev, mat2_dev_fp32, MATRIX_K * MATRIX_N);
-    cudaErrCheck(cudaMemcpy(mat1_fp16, mat1_dev, sizeof(half) * MATRIX_M * MATRIX_K, cudaMemcpyDeviceToHost));
-    cudaErrCheck(cudaMemcpy(mat2_fp16, mat2_dev, sizeof(half) * MATRIX_K * MATRIX_N, cudaMemcpyDeviceToHost));
-    clock_gettime(CLOCK_REALTIME, &cuMemcpy_end);
-
-    printf("\nM = %d, N = %d, K = %d. alpha = %f, beta = %f\n\n", MATRIX_M, MATRIX_N, MATRIX_K, alpha, beta);
-
-    printf("Running with wmma...\n");
-    cudaErrCheck(cudaEventRecord(startWMMA));
-    wmma_example <<< gridDim, blockDim >>> (mat1_dev, mat2_dev, c_wmma, MATRIX_M, MATRIX_N, MATRIX_K, alpha, beta); 
-    cudaErrCheck(cudaEventRecord(stopWMMA));
-    */
-
-    /*
-    printf("Running with sgemm...\n");
-    cudaErrCheck(cudaEventRecord(startcublas));
-    cublasSgemm(cublasHandle_default, CUBLAS_OP_N, CUBLAS_OP_N, MATRIX_M, MATRIX_N, MATRIX_K, &alpha, mat1_dev_fp32, MATRIX_M, mat2_dev_fp32, MATRIX_N, &beta, c_sgemm, MATRIX_K);
-    cudaErrCheck(cudaEventRecord(stopcublas));
-    */
-
-    /*
-    printf("Running with cuBLAS on TCUs...\n");
-    //cudaErrCheck(cudaEventRecord(startcublasEX));
-    cublasErrCheck(cublasGemmEx(cublasHandle, CUBLAS_OP_N, CUBLAS_OP_N,
-                MATRIX_M, MATRIX_N, MATRIX_K,
-                &alpha,
-                mat1_dev, CUDA_R_16F, MATRIX_M,
-                mat2_dev, CUDA_R_16F, MATRIX_K,
-                &beta,
-                c_cublas, CUDA_R_32F, MATRIX_M,
-                CUDA_R_32F, CUBLAS_GEMM_DFALT_TENSOR_OP)); // tcu
-    //cudaErrCheck(cudaEventRecord(stopcublasEX));
-    */
-
-    //struct timespec chkRes_start, chkRes_end;
-    //clock_gettime(CLOCK_REALTIME,&chkRes_start);
-    // Copy result back to the host for error checking
-    //cudaErrCheck(cudaMemcpy(c_host_wmma, c_wmma, MATRIX_M * MATRIX_N * sizeof(float), cudaMemcpyDeviceToHost));
-    //cudaErrCheck(cudaMemcpy(c_host_cublas, c_cublas, MATRIX_M * MATRIX_N * sizeof(float), cudaMemcpyDeviceToHost));
-    //cudaErrCheck(cudaMemcpy(c_host_sgemm, c_sgemm, MATRIX_M * MATRIX_N * sizeof(float), cudaMemcpyDeviceToHost));
-
-    // print error checking, cublasGemmEx and cublas
-    //printf("\nChecking results with tensor cores...\n");
-
-    // 0.01% relative tolerance. 1e-5 absolute tolerance.
-    /*
-    int errors = 0;
-    for (int i = 0; i < MATRIX_M * MATRIX_N; i++) {
-        float v1 = c_host_sgemm[i];
-        float v2 = c_host_cublas[i];
-
-        // TODO: abs diff failed due to precision loss
-        // current fix: range value less than 2^10 (IEEE half type)
-        if (v1 / v2 > 1.0001 || v2 / v1 > 1.0001 || abs(v1 - v2) > 1e-3) {
-            errors++;
-            if (errors < 10) printf("%.1f %.1f diff:%.1f\n", v1, v2, abs(v1-v2));
-        }
-    }
-
-    if (errors > 0) {
-        printf("WMMA does not agree with cuBLAS! %d errors!\n", errors);
-    }
-    */
-
-    //clock_gettime(CLOCK_REALTIME,&chkRes_end);
-
-    // print time
-    //float wmmaTime;
-    //float cublasTime;
-
-    //cudaErrCheck(cudaEventSynchronize(stopWMMA));
-    //cudaErrCheck(cudaEventSynchronize(stopcublasEX));
-    //cudaErrCheck(cudaEventElapsedTime(&wmmaTime, startWMMA, stopWMMA));
-    //cudaErrCheck(cudaEventElapsedTime(&cublasTime, startcublas, stopcublas));
-
-    //printf("wmma took %fms\n", wmmaTime);
-    //printf("cublas (FP32) took %fms\n", cublasTime);
-    //cudaErrCheck(cudaEventElapsedTime(&cublasTime, startcublasEX, stopcublasEX));
-    //printf("cublas tensor cores (FP16) took %fms\n", cublasTime);
-
-    // free those data structures
-    //cudaErrCheck(cudaEventDestroy(startWMMA));
-    //cudaErrCheck(cudaEventDestroy(stopWMMA));
-    //cudaErrCheck(cudaEventDestroy(startcublasEX));
-    //cudaErrCheck(cudaEventDestroy(stopcublasEX));
-    //cudaErrCheck(cudaEventDestroy(startcublas));
-    //cudaErrCheck(cudaEventDestroy(stopcublas));
-
-    //cudaErrCheck(cudaFree(mat1_dev));
-    //cudaErrCheck(cudaFree(mat2_dev));
-    //cudaErrCheck(cudaFree(c));
-    //cudaErrCheck(cudaFree(c_wmma));
-    //cudaErrCheck(cudaFree(c_cublas));
-    //cudaErrCheck(cudaFree(c_sgemm));
-
-    //free(matrix1);
-    //free(matrix2);
-    //free(mat1_fp16);
-    //free(mat2_fp16);
-    //free(mat1_fp32);
-    //free(mat2_fp32);
-    //free(c_host_wmma);
-    //free(c_host_cublas);
-    //free(c_host_sgemm);
-
-    //clock_gettime(CLOCK_REALTIME, &tcu_end);
-    //double tcu_fill = (fill_end.tv_sec -  fill_start.tv_sec)* BILLION + fill_end.tv_nsec - fill_start.tv_nsec;
-    //double tcu_convert = (convert_end.tv_sec -  convert_start.tv_sec)* BILLION + convert_end.tv_nsec - convert_start.tv_nsec;
-    //double tcu_elapse = (tcu_end.tv_sec -  tcu_start.tv_sec)* BILLION + tcu_end.tv_nsec - tcu_start.tv_nsec;
-    //double init_elapse = (init_end.tv_sec -  init_start.tv_sec)* BILLION + init_end.tv_nsec - init_start.tv_nsec;
-    //double cuMemcpy_elapse = (cuMemcpy_end.tv_sec -  cuMemcpy_start.tv_sec)* BILLION + cuMemcpy_end.tv_nsec - cuMemcpy_start.tv_nsec;
-    //double chkRes_elapse = (chkRes_end.tv_sec -  chkRes_start.tv_sec)* BILLION + chkRes_end.tv_nsec - chkRes_start.tv_nsec;
-    
-    //printf("Time to initialize: %lf\n", init_elapse/(1000*1000));
-    //printf("Time to fill matrices: %lf\n", tcu_fill/(1000*1000));
-    //printf("Time to convert data type: %lf\n", tcu_convert/(1000*1000));
-    //printf("Time for cudaMemcpy: %lf\n", cuMemcpy_elapse/(1000*1000));
-    //printf("Time to check result: %lf\n", chkRes_elapse/(1000*1000));
-    //printf("NVIDIA lib overall MatMul_Agg Time: %lf\n", tcu_elapse/(1000*1000));
 
     // YDB hashJoin below this point
 
@@ -1296,16 +977,18 @@ struct tableNode * hashJoin(struct joinNode *jNode, struct statistic *pp){
 
     CUDA_SAFE_CALL_NO_SYNC(cudaFree(gpu_bucket));
 
+    printf("res->totalAttr: %d\n", res->totalAttr);
     for(int i=0; i<res->totalAttr; i++){
 
         int index, pos;
         long colSize = 0, resSize = 0;
-        int leftRight = 0;
+        int leftRight = 0; // seems like left (fact) table = 0; right (dim) table = 1
 
         int attrSize, attrType;
         char * table = NULL;
         int found = 0 , dataPos, format;
 
+        //printf("keepInGpu: %d\n", jNode->keepInGpu[1]); //GPU
         if (jNode->keepInGpu[i] == 1)
             res->dataPos[i] = GPU;
         else
@@ -1330,23 +1013,24 @@ struct tableNode * hashJoin(struct joinNode *jNode, struct statistic *pp){
             }
         }
 
-        if(leftRight == 0){
-            index = jNode->leftOutputIndex[pos]; // 0
+        // judge whether fact or dim table and set the corresponding attrSize/attrType
+        if(leftRight == 0){ // left (fact) table
+            index = jNode->leftOutputIndex[pos]; 
             dataPos = jNode->leftTable->dataPos[index];
             format = jNode->leftTable->dataFormat[index];
 
-            table = jNode->leftTable->content[index];
+            table = jNode->leftTable->content[index]; // used for later joinFact
             attrSize  = jNode->leftTable->attrSize[index];
             attrType  = jNode->leftTable->attrType[index];
             colSize = jNode->leftTable->attrTotalSize[index];
 
             resSize = res->tupleNum * attrSize;
-        }else{
-            index = jNode->rightOutputIndex[pos]; // 1
+        }else{ // right (dim) table
+            index = jNode->rightOutputIndex[pos]; 
             dataPos = jNode->rightTable->dataPos[index];
             format = jNode->rightTable->dataFormat[index];
 
-            table = jNode->rightTable->content[index];
+            table = jNode->rightTable->content[index]; // used for later joinDim
             attrSize = jNode->rightTable->attrSize[index];
             attrType = jNode->rightTable->attrType[index];
             colSize = jNode->rightTable->attrTotalSize[index];
@@ -1358,7 +1042,7 @@ struct tableNode * hashJoin(struct joinNode *jNode, struct statistic *pp){
 
         CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&gpu_result,resSize));
 
-        if(leftRight == 0){
+        if(leftRight == 0){ // means left talbe, call joinFact
             if(format == UNCOMPRESSED){
                 if(dataPos == MEM || dataPos == MMAP || dataPos == PINNED){
                     CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void **)&gpu_fact, colSize));
@@ -1424,7 +1108,7 @@ struct tableNode * hashJoin(struct joinNode *jNode, struct statistic *pp){
 
             }
 
-        }else{
+        }else{ // leftRight = 1, means right table, call joinDim
             if(format == UNCOMPRESSED){
 
                 if(dataPos == MEM || dataPos == MMAP || dataPos == PINNED){

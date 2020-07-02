@@ -289,7 +289,46 @@ __global__ void wmma_example(half *a, half *b, float *c, int M, int N, int K, fl
  *  A new table node
  */
 struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *matrix_dim, struct groupByNode *gbNode){
+    // get some atrributes after jNode matched tuples
+    int *gpuGbIndex = NULL, gpuTupleNum, gpuGbColNum;
+    int gbConstant = 0;
 
+    struct tableNode *res = (struct tableNode *) malloc(sizeof(struct tableNode));
+    CHECK_POINTER(res);
+    res->tupleSize = gbNode->tupleSize;
+    res->totalAttr = gbNode->outputAttrNum;
+    res->attrType = (int *) malloc(sizeof(int) * res->totalAttr);
+    CHECK_POINTER(res->attrType);
+    res->attrSize = (int *) malloc(sizeof(int) * res->totalAttr);
+    CHECK_POINTER(res->attrSize);
+    res->attrTotalSize = (int *) malloc(sizeof(int) * res->totalAttr); 
+    CHECK_POINTER(res->attrTotalSize);
+    res->dataPos = (int *) malloc(sizeof(int) * res->totalAttr);
+    CHECK_POINTER(res->dataPos);
+    res->dataFormat = (int *) malloc(sizeof(int) * res->totalAttr);
+    CHECK_POINTER(res->dataFormat);
+    res->content = (char **) malloc(sizeof(char **) * res->totalAttr);
+    CHECK_POINTER(res->content);
+
+    for(int i=0;i<res->totalAttr;i++){
+        res->attrType[i] = gbNode->attrType[i];
+        res->attrSize[i] = gbNode->attrSize[i];
+        res->dataFormat[i] = UNCOMPRESSED;
+    }
+
+    gpuTupleNum = gbNode->table->tupleNum;
+    gpuGbColNum = gbNode->groupByColNum;
+
+    // groupByIndex == -1 means query doesn't contain group by keyword
+    if(gpuGbColNum == 1 && gbNode->groupByIndex[0] == -1){
+        gbConstant = 1;
+    }
+
+    // need to extract data from agg_cal_cons->calMathExp
+
+
+    // TODO: implement group by ranking using uthash 
+    /*
     printf("groupByColNum: %d\n", gbNode->groupByColNum);
     // currently only support 2 groupBy index
     int leftGbIdx = gbNode->groupByIndex[0];
@@ -317,6 +356,7 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
             printf("$items{%d}{%d} = %d\n", item1->left_col_idx, item2->left_col_idx, item2->val);
         }
     }
+    */
 
     int MATRIX_M, MATRIX_N, MATRIX_K;
     MATRIX_M = MATRIX_N = MATRIX_K = *matrix_dim;

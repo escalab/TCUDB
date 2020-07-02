@@ -101,6 +101,7 @@ __device__ static float calMathExp(char **content, struct mathExp exp, int pos){
     //cuPrintf("index: %d\tpos: %d\tcontent: %d\n", exp.opValue, pos, ((int *)(content[exp.opValue]))[pos]);
 
     if(exp.op == NOOP){
+        // opType -- regular column or a constant
         if (exp.opType == CONS)
             res = exp.opValue;
         else{
@@ -116,7 +117,7 @@ __device__ static float calMathExp(char **content, struct mathExp exp, int pos){
 
     }else if (exp.op == MULTIPLY){
         // NOTE: here only perform multiply, so duplicates may happen
-        //cuPrintf("left table val: %.0f\t\tright table val: %.0f\n", calMathExp(content, ((struct mathExp*)exp.exp)[0],pos), calMathExp(content, ((struct mathExp*)exp.exp)[1],pos));
+        //cuPrintf("left val: %.0f\t\tright val: %.0f\n", calMathExp(content, ((struct mathExp*)exp.exp)[0],pos), calMathExp(content, ((struct mathExp*)exp.exp)[1],pos));
         res = calMathExp(content, ((struct mathExp*)exp.exp)[0],pos) * calMathExp(content, ((struct mathExp*)exp.exp)[1], pos);
         //cuPrintf("result: %.0f\n", res);
 
@@ -140,6 +141,7 @@ __global__ static void agg_cal_cons(char ** content, int colNum, struct groupByE
     for(int i=0;i<32;i++)
         buf[i] = 0;
 
+    // peform computation on all matched tuples
     for(int i=index;i<tupleNum;i+=stride){
         for(int j=0;j<colNum;j++){
             int func = exp[j].func;
@@ -154,6 +156,7 @@ __global__ static void agg_cal_cons(char ** content, int colNum, struct groupByE
         }
     }
 
+    // final result
     for(int i=0;i<colNum;i++)
         atomicAdd(&((float *)result[i])[0], buf[i]);
 }
@@ -265,8 +268,11 @@ struct tableNode * groupBy(struct groupByNode * gb, struct statistic * pp){
     
     gpuTupleNum = gb->table->tupleNum;
     gpuGbColNum = gb->groupByColNum;
+    //printf("gpuGbColNum: %d\n", gb->groupByColNum);
 
+    // groupByIndex == -1 means query doesn't contain group by keyword
     if(gpuGbColNum == 1 && gb->groupByIndex[0] == -1){
+        //printf("HELLO OTTO\n");
         gbConstant = 1;
     }
 
@@ -283,6 +289,7 @@ struct tableNode * groupBy(struct groupByNode * gb, struct statistic * pp){
     column = (char **) malloc(sizeof(char *) * gb->table->totalAttr);
     CHECK_POINTER(column);
 
+    // copy table content for group by operation
     for(int i=0;i<gb->table->totalAttr;i++){
         int attrSize = gb->table->attrSize[i];
         if(gb->table->dataPos[i]==MEM){
@@ -295,7 +302,7 @@ struct tableNode * groupBy(struct groupByNode * gb, struct statistic * pp){
         }
     }
 
-    if(gbConstant != 1){
+    if(gbConstant != 1){ // query has group by keywords, need build_groupby_key, count_group_num and scanImpl to update gbCount
 
         CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void **)&gpuGbType, sizeof(int) * gb->groupByColNum));
         CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(gpuGbType,gb->groupByType, sizeof(int) * gb->groupByColNum, cudaMemcpyHostToDevice));
@@ -341,7 +348,7 @@ struct tableNode * groupBy(struct groupByNode * gb, struct statistic * pp){
 
     if(gbConstant == 1)
         res->tupleNum = 1;
-    else
+    else // query has group by keyword
         res->tupleNum = gbCount;
 
     printf("[INFO]Number of groupBy results: %ld\n",res->tupleNum);
@@ -354,7 +361,7 @@ struct tableNode * groupBy(struct groupByNode * gb, struct statistic * pp){
     CHECK_POINTER(result);
     CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&gpuResult, sizeof(char *)* res->totalAttr));
 
-    //printf("res->totalAttr: %d\n", res->totalAttr); //3
+    // copy thing to device memory for computation
     for(int i=0; i<res->totalAttr;i++){
         CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&result[i], res->tupleNum * res->attrSize[i]));
         CUDA_SAFE_CALL_NO_SYNC(cudaMemset(result[i], 0, res->tupleNum * res->attrSize[i]));
@@ -376,34 +383,24 @@ struct tableNode * groupBy(struct groupByNode * gb, struct statistic * pp){
     CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(gpuGbExp, gb->gbExp, sizeof(struct groupByExp)*res->totalAttr, cudaMemcpyHostToDevice));
     for(int i=0;i<res->totalAttr;i++){
         struct mathExp * tmpMath;
-        if(gb->gbExp[i].exp.opNum == 2){
+        if(gb->gbExp[i].exp.opNum == 2){ // 2 operands
             CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void **)&tmpMath, 2* sizeof(struct mathExp)));
             CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(tmpMath,(struct mathExp*)gb->gbExp[i].exp.exp,2*sizeof(struct mathExp), cudaMemcpyHostToDevice));
             CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(&(gpuGbExp[i].exp.exp), &tmpMath, sizeof(struct mathExp *), cudaMemcpyHostToDevice));
         }
     }
 
-    gpuGbColNum = res->totalAttr;
+    gpuGbColNum = res->totalAttr; // not sure why update second times
+    //printf("2 gpuGbColNum: %d\n", res->totalAttr);
 
-    if(gbConstant !=1){
+    if(gbConstant !=1){ // query has group by keyword
         agg_cal<<<grid,block>>>(gpuContent, gpuGbColNum, gpuGbExp, gpuGbType, gpuGbSize, gpuTupleNum, gpuGbKey, gpu_psum, gpu_groupNum,gpuResult);
 
         CUDA_SAFE_CALL_NO_SYNC(cudaFree(gpuGbKey));
         CUDA_SAFE_CALL_NO_SYNC(cudaFree(gpu_psum));
         CUDA_SAFE_CALL_NO_SYNC(cudaFree(gpu_groupNum));
-    }else
+    }else // query has no group by keyword
         agg_cal_cons<<<grid,block>>>(gpuContent, gpuGbColNum, gpuGbExp, gpuTupleNum,gpuResult);
-
-    //char ** test = NULL;
-    //ERROR_CHECK(cudaMemcpy(test, gpuResult, 24, cudaMemcpyDeviceToHost));
-    /*
-    for(int i=0; i<res->totalAttr;i++) { // res->totalAttr=3
-        test[i] =(char *)malloc(res->tupleNum * res->attrSize[i]);
-        memset(test[i], 0, res->tupleNum * res->attrSize[i]);
-        CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(&test[i], &gpuResult[i], sizeof(char *), cudaMemcpyDeviceToHost));
-    }*/
-    //printf("Host result: %f\n", ((float*)test[2])[0]);
-    
 
     for(int i=0; i<gb->table->totalAttr;i++){
         if(gb->table->dataPos[i]==MEM)

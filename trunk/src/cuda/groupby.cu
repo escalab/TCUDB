@@ -23,8 +23,8 @@
 #include "../include/gpuCudaLib.h"
 #include "../include/cudaHash.h"
 #include "scanImpl.cu"
-#include "../include/cuPrintf.cu"
-#include "../include/cuPrintf.cuh"
+//#include "../include/cuPrintf.cu"
+//#include "../include/cuPrintf.cuh"
 
 /*
 #define ERROR_CHECK(ans) { gpuAssert((ans), __FILE__, __LINE__); }
@@ -100,6 +100,7 @@ __device__ static float calMathExp(char **content, struct mathExp exp, int pos){
     float res ;
     //cuPrintf("index: %d\tpos: %d\tcontent: %d\n", exp.opValue, pos, ((int *)(content[exp.opValue]))[pos]);
 
+    // terminate condition
     if(exp.op == NOOP){
         // opType -- regular column or a constant
         if (exp.opType == CONS)
@@ -142,6 +143,8 @@ __global__ static void agg_cal_cons(char ** content, int colNum, struct groupByE
         buf[i] = 0;
 
     // peform computation on all matched tuples
+    //printf("tupleNum: %d\n", tupleNum); // 119142
+    //printf("colNum: %d\n", colNum);  // 1
     for(int i=index;i<tupleNum;i+=stride){
         for(int j=0;j<colNum;j++){
             int func = exp[j].func;
@@ -225,7 +228,7 @@ __global__ static void agg_cal(char ** content, int colNum, struct groupByExp* e
 
 struct tableNode * groupBy(struct groupByNode * gb, struct statistic * pp){
 
-    cudaPrintfInit();
+    //cudaPrintfInit();
 
     struct timespec start,end;
     clock_gettime(CLOCK_REALTIME,&start);
@@ -417,8 +420,8 @@ struct tableNode * groupBy(struct groupByNode * gb, struct statistic * pp){
     double timeE = (end.tv_sec -  start.tv_sec)* BILLION + end.tv_nsec - start.tv_nsec;
     printf("GroupBy Time: %lf\n", timeE/(1000*1000));
 
-    cudaPrintfDisplay(stdout, true);
-    cudaPrintfEnd();
+    //cudaPrintfDisplay(stdout, true);
+    //cudaPrintfEnd();
 
     return res;
 }

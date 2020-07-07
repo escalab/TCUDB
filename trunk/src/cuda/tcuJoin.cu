@@ -34,6 +34,9 @@
 #include <mma.h>
 #include <cublas_v2.h>
 #include "../include/uthash.h"
+#include <math.h>
+#include "../include/cuPrintf.cu"
+#include "../include/cuPrintf.cuh"
 
 using namespace nvcuda;
 
@@ -82,6 +85,7 @@ void cublasErrCheck_(cublasStatus_t stat, const char *file, int line) {
  * Assum both matrix have the same dimension and the value in INT type for now, e.g., both 16x16 dim
  * To support multiple types, this function need to be modified
  */
+/*
 __host__ void static fill_matrix(struct joinNode *jNode, int * matrix1, int * matrix2, int width,
         int attr_num1, int attr_num2, int attr_type1, int attr_type2) {
     int *mat1_i, *mat1_j, *mat1_val;
@@ -160,8 +164,21 @@ __host__ void static fill_matrix(struct joinNode *jNode, int * matrix1, int * ma
     free(mat2_j);
     free(mat2_val);
 }
+*/
 
-__host__ void static verify_result(float * matrix, int width) { // correct!
+
+__device__ void static verify_gpuResult(float * matrix, int width) {
+    int i;
+    for (i = 0; i < width*width; i++) {
+        //printf("%d\t", matrix[i]);
+        cuPrintf("%.2f\t", matrix[i]);
+        if ((i+1) % width == 0)
+          cuPrintf("\n");  
+    }
+
+}
+
+__host__ void static verify_result(float * matrix, int width) {
 
     int i;
     for (i = 0; i < width*width; i++) {
@@ -213,6 +230,92 @@ __host__ void static convertIntToFp32(float *out, int *in, int width) {
     for (i = 0; i < width * width; i++) {
         out[i] = (float)in[i]; 
     }
+}
+
+/* Check whether the tupleNum is multiple of 16 because the WMMA requires the width of matrix be multiple of 16 */
+__host__ int static findMatWidth(int tupleNum) {
+    if (tupleNum <= 256)
+        return 16;
+    else {
+        int tmp = ceil(sqrt(tupleNum));
+        return (int)(ceil(tmp/(float)16)*16);
+    }
+}
+
+/*
+__device__ void transform_data(char **content, struct mathExp exp, int pos, float * A, float * B) {
+    // only care about MULTIPLY
+    if (exp.op == MULTIPLY) {
+
+        
+    }
+}
+*/
+
+// since WMMA perform C = alpha*A*B+beta*C, here we just fill operator MULTIPLY
+__device__ static float fillMathExp(char **content, struct mathExp exp, int pos, float * A, float * B) {
+    float res;
+    //termination
+    if (exp.op == NOOP) {
+        if (exp.opType == CONS)
+            res = exp.opValue; // value of the constant
+        else {
+            int index = exp.opValue; // index of the column
+            // fill value here
+            res = ((int *)(content[index]))[pos];
+            if (A == NULL) {
+                //cuPrintf("B res: %.4f\n", res); 
+                B[pos] = res;
+            } else {
+                //cuPrintf("A res: %.4f\n", res); 
+                A[pos] = res;
+            }
+        }
+    } else if (exp.op == MULTIPLY) {
+        // not fill here, just recursive call
+        //A[pos] = fillMathExp(content, ((struct mathExp*)exp.exp)[0], pos, A, B);
+        //B[pos] = fillMathExp(content, ((struct mathExp*)exp.exp)[1], pos, A, B);
+        res = fillMathExp(content, ((struct mathExp*)exp.exp)[0], pos, A, NULL) * fillMathExp(content, ((struct mathExp*)exp.exp)[1], pos, NULL, B);
+    }
+
+    return res;
+}
+
+
+__global__ static void agg_cal_cons(char ** content, int colNum, struct groupByExp* exp, long tupleNum, float * A, float * B) {
+//__host__ void static agg_cal_cons(char ** content, int colNum, struct groupByExp* exp, long tupleNum, float * A, float * B) {
+    int stride = blockDim.x * gridDim.x;
+    int index = blockIdx.x * blockDim.x + threadIdx.x;
+
+    for(int i=index;i<tupleNum;i+=stride){
+    //for(int i=0;i<tupleNum;i++){
+        for(int j=0;j<colNum;j++){
+            int func = exp[j].func;
+            // for now, we only care about SUM
+            if (func == SUM) {
+                // 1. fill data into two matrices
+                //transform_data(content, exp[j].exp, i, A, B);
+                fillMathExp(content, exp[j].exp, i, A, B);
+                // TODO: how to maintain the order for threads
+                // maybe the order does not important if we can get relative ranking
+
+                // 2. copy data into device using cudaMemcpy (if directly assign in device memory, can avoid this step)
+
+            } else if (func == AVG) {
+                // not the main point now
+            }
+        }
+    }
+} 
+
+int countZeroes(float * arr, int n) {
+    int cnt = 0, i;
+    // if zero is not present, return 0
+    for (i = 0; i < n; i++) {
+        if (arr[i] == 0.0)
+            cnt++;
+    }
+    return cnt;
 }
 
 /* Performs an MxNxK GEMM (C=alpha*A*B + beta*C) assuming:
@@ -288,9 +391,14 @@ __global__ void wmma_example(half *a, half *b, float *c, int M, int N, int K, fl
  * Output:
  *  A new table node
  */
-struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *matrix_dim, struct groupByNode *gbNode){
+//struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *matrix_dim, struct groupByNode *gbNode){
+struct tableNode * tcuJoin(int *matrix_dim, struct groupByNode *gbNode){
+
+    cudaPrintfInit();
+
     // get some atrributes after jNode matched tuples
     int *gpuGbIndex = NULL, gpuTupleNum, gpuGbColNum;
+    char ** gpuContent = NULL, **column = NULL; // column is used for MEM
     int gbConstant = 0;
 
     struct tableNode *res = (struct tableNode *) malloc(sizeof(struct tableNode));
@@ -319,15 +427,100 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
     gpuTupleNum = gbNode->table->tupleNum;
     gpuGbColNum = gbNode->groupByColNum;
 
+    int matrix_width = findMatWidth(gpuTupleNum);
+    printf("matrix_width: %d\n", matrix_width);
+    float *h_fp32_A, *h_fp32_B; // host float32 array
+    float *d_fp32_A, *d_fp32_B; // device float32 array
+    half *d_fp16_A, *d_fp16_B;
+
+    h_fp32_A = (float*)calloc(matrix_width*matrix_width, sizeof(float));
+    h_fp32_B = (float*)calloc(matrix_width*matrix_width, sizeof(float));
+
+    CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void **)&d_fp32_A, matrix_width * matrix_width * sizeof(float *)));
+    CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void **)&d_fp32_B, matrix_width * matrix_width * sizeof(float *)));
+
+    CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void **)&d_fp16_A, matrix_width * matrix_width * sizeof(half)));
+    CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void **)&d_fp16_B, matrix_width * matrix_width * sizeof(half)));
+
     // groupByIndex == -1 means query doesn't contain group by keyword
     if(gpuGbColNum == 1 && gbNode->groupByIndex[0] == -1){
         gbConstant = 1;
     }
 
+    dim3 grid(1024);
+    dim3 block(128);
+    int blockNum = gbNode->table->tupleNum / block.x + 1;
+    if (blockNum < 1024)
+        grid = blockNum;
+
+    CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void **)&gpuContent, gbNode->table->totalAttr * sizeof(char *)));
+    // copy table content for group by operation
+    for(int i=0;i<gbNode->table->totalAttr;i++){
+        int attrSize = gbNode->table->attrSize[i];
+        if(gbNode->table->dataPos[i]==MEM){
+            CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void **)& column[i], attrSize * gbNode->table->tupleNum));
+            CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(column[i], gbNode->table->content[i], attrSize * gbNode->table->tupleNum, cudaMemcpyHostToDevice));
+            CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(&gpuContent[i], &column[i], sizeof(char *),cudaMemcpyHostToDevice));
+        } else { // dataPos in GPU
+            CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(&gpuContent[i], &gbNode->table->content[i], sizeof(char *), cudaMemcpyHostToDevice));
+        }
+    }
+
+    if (gbConstant != 1) { // query has group by keyword
+        // TODO:Later, perform some ranking, count #gb
+    }
+
+    if (gbConstant == 1) {
+        res->tupleNum = 1; // no group by keyword, just return 1
+    }
+    else {
+        // return count #gb
+    }
+
+    struct groupByExp *gpuGbExp;
+    CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&gpuGbExp, sizeof(struct groupByExp)*res->totalAttr));
+    CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(gpuGbExp, gbNode->gbExp, sizeof(struct groupByExp)*res->totalAttr, cudaMemcpyHostToDevice));
+
+    // check if there are two operands in group by expression
+    for (int i=0;i<res->totalAttr;i++){
+        struct mathExp * tmpMath;
+        if(gbNode->gbExp[i].exp.opNum == 2){ // 2 operands
+            CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void **)&tmpMath, 2* sizeof(struct mathExp)));
+            CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(tmpMath,(struct mathExp*)gbNode->gbExp[i].exp.exp,2*sizeof(struct mathExp), cudaMemcpyHostToDevice));
+            CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(&(gpuGbExp[i].exp.exp), &tmpMath, sizeof(struct mathExp *), cudaMemcpyHostToDevice));
+        }
+    }
+
+    gpuGbColNum = res->totalAttr; // not sure why update second times
+
     // need to extract data from agg_cal_cons->calMathExp
+    if (gbConstant != 1) {
+        //query has group by keyword
+    } else {
+        // cannot see device memory address
+        agg_cal_cons<<<grid,block>>>(gpuContent, gpuGbColNum, gpuGbExp, gpuTupleNum, d_fp32_A, d_fp32_B);
+
+    }
+
+    //TODO:verify gpu array assignment
+    // for now, manually compare few tuples and count # of zeroes
+
+    // copy device array for verification
+    CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(h_fp32_A, d_fp32_A, sizeof(float) * matrix_width * matrix_width, cudaMemcpyDeviceToHost));
+    CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(h_fp32_B, d_fp32_B, sizeof(float) * matrix_width * matrix_width, cudaMemcpyDeviceToHost));
+    //verify_result(h_fp32_A, matrix_width);
+    //verify_result(h_fp32_B, matrix_width);
+    //printf("# of zeroes: %d\n",countZeroes(h_fp32_A, matrix_width*matrix_width)); // 4762
+
+    //CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(d_fp32_B, h_fp32_B, sizeof(float) * matrix_width * matrix_width, cudaMemcpyHostToDevice));
+    convertFp32ToFp16<<< (matrix_width * matrix_width + 255) / 256, 256 >>> (d_fp16_A, d_fp32_A, matrix_width * matrix_width);
+    convertFp32ToFp16<<< (matrix_width * matrix_width + 255) / 256, 256 >>> (d_fp16_B, d_fp32_B, matrix_width * matrix_width);
+
+    //TODO:verify result array, then timing
+    // if everything is good, then TODO:ranking
 
 
-    // TODO: implement group by ranking using uthash 
+    // TODO: later, implement group by ranking using uthash 
     /*
     printf("groupByColNum: %d\n", gbNode->groupByColNum);
     // currently only support 2 groupBy index
@@ -369,8 +562,8 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
     int *matrix1;
     int *matrix2;
 
-    half *mat1_fp16;
-    half *mat2_fp16;
+    //half *mat1_fp16;
+    //half *mat2_fp16;
     float *mat1_fp32;
     float *mat2_fp32;
 
@@ -413,8 +606,8 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
     //memset(matrix1, 0, sizeof(int)*MATRIX_M*MATRIX_K);
     //memset(matrix2, 0, sizeof(int)*MATRIX_K*MATRIX_N);
 
-    mat1_fp16 = (half*)malloc(sizeof(half) * MATRIX_M * MATRIX_K);
-    mat2_fp16 = (half*)malloc(sizeof(half) * MATRIX_K * MATRIX_N);
+    //mat1_fp16 = (half*)malloc(sizeof(half) * MATRIX_M * MATRIX_K);
+    //mat2_fp16 = (half*)malloc(sizeof(half) * MATRIX_K * MATRIX_N);
     mat1_fp32 = (float*)malloc(sizeof(float) * MATRIX_M * MATRIX_K);
     mat2_fp32 = (float*)malloc(sizeof(float) * MATRIX_K * MATRIX_N);
 
@@ -454,8 +647,8 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
     struct timespec fill_start, fill_end, convert_start, convert_end;
     struct timespec cuMemcpy_start, cuMemcpy_end;
     clock_gettime(CLOCK_REALTIME, &fill_start);
-    fill_matrix(jNode, matrix1, matrix2, MATRIX_M, 
-            jNode->leftTable->totalAttr, jNode->rightTable->totalAttr, jNode->leftTable->attrType[0], jNode->rightTable->attrType[0]);
+    //fill_matrix(jNode, matrix1, matrix2, MATRIX_M, 
+    //        jNode->leftTable->totalAttr, jNode->rightTable->totalAttr, jNode->leftTable->attrType[0], jNode->rightTable->attrType[0]);
     clock_gettime(CLOCK_REALTIME, &fill_end);
 
     clock_gettime(CLOCK_REALTIME, &convert_start);
@@ -488,8 +681,8 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
     cudaErrCheck(cudaMemcpy(mat2_dev_fp32, mat2_fp32, sizeof(float) * MATRIX_K * MATRIX_N, cudaMemcpyHostToDevice));
     convertFp32ToFp16<<< (MATRIX_M * MATRIX_K + 255) / 256, 256 >>> (mat1_dev, mat1_dev_fp32, MATRIX_M * MATRIX_K);
     convertFp32ToFp16<<< (MATRIX_K * MATRIX_N + 255) / 256, 256 >>> (mat2_dev, mat2_dev_fp32, MATRIX_K * MATRIX_N);
-    cudaErrCheck(cudaMemcpy(mat1_fp16, mat1_dev, sizeof(half) * MATRIX_M * MATRIX_K, cudaMemcpyDeviceToHost));
-    cudaErrCheck(cudaMemcpy(mat2_fp16, mat2_dev, sizeof(half) * MATRIX_K * MATRIX_N, cudaMemcpyDeviceToHost));
+    //cudaErrCheck(cudaMemcpy(mat1_fp16, mat1_dev, sizeof(half) * MATRIX_M * MATRIX_K, cudaMemcpyDeviceToHost));
+    //cudaErrCheck(cudaMemcpy(mat2_fp16, mat2_dev, sizeof(half) * MATRIX_K * MATRIX_N, cudaMemcpyDeviceToHost));
     clock_gettime(CLOCK_REALTIME, &cuMemcpy_end);
 
     printf("\nM = %d, N = %d, K = %d. alpha = %f, beta = %f\n\n", MATRIX_M, MATRIX_N, MATRIX_K, alpha, beta);
@@ -586,8 +779,8 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
 
     free(matrix1);
     free(matrix2);
-    free(mat1_fp16);
-    free(mat2_fp16);
+    //free(mat1_fp16);
+    //free(mat2_fp16);
     free(mat1_fp32);
     free(mat2_fp32);
     free(c_host_wmma);
@@ -609,6 +802,9 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
     printf("Time for cudaMemcpy: %lf\n", cuMemcpy_elapse/(1000*1000));
     //printf("Time to check result: %lf\n", chkRes_elapse/(1000*1000));
     printf("NVIDIA lib overall MatMul_Agg Time: %lf\n", tcu_elapse/(1000*1000));
+
+    cudaPrintfDisplay(stdout, true);
+    cudaPrintfEnd();
 
     return 0; // non-void function
 

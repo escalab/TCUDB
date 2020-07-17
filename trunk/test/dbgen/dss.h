@@ -386,7 +386,8 @@ extern tdef tdefs[];
 #define  L_QTY_MAX    50
 #define  L_TAX_MIN    0
 #define  L_TAX_MAX    8
-#define  L_DCNT_MIN   0
+#define  L_DCNT_MIN   1
+//#define  L_DCNT_MIN   0
 #define  L_DCNT_MAX   10
 #define  L_PKEY_MIN   1
 

@@ -60,9 +60,12 @@ long
 rpb_routine(long p)
 	{
 	long price;	
-	price = 90000;
-	price += (p/10) % 20001;        /* limit contribution to $200 */
-	price += (p % 1000) * 100;
+	//price = 90000;
+	price = 4;
+	//price += (p/10) % 20001;        /* limit contribution to $200 */
+	price += (p/10000) % 201;        /* limit contribution to $200 */
+	//price += (p % 1000) * 100;
+	price += (p % 4096) * 2;
 	
 	return(price);
 	}
@@ -266,7 +269,10 @@ mk_order(long index, order_t *o, long upd_num)
 		pick_str(&l_smode_set, L_SMODE_SD, o->lineorders[lcnt].shipmode);
 		
 		RPRICE_BRIDGE( rprice, o->lineorders[lcnt].partkey);
-		o->lineorders[lcnt].extended_price = rprice * o->lineorders[lcnt].quantity;
+		//o->lineorders[lcnt].extended_price = rprice * o->lineorders[lcnt].quantity;
+		//o->lineorders[lcnt].extended_price = (rprice%128) * o->lineorders[lcnt].quantity;
+		//o->lineorders[lcnt].extended_price = 1;
+		o->lineorders[lcnt].extended_price = (rand() % 8191)+1;
 		o->lineorders[lcnt].revenue = o->lineorders[lcnt].extended_price * ((long)100-o->lineorders[lcnt].discount)/(long)PENNIES;
 		
 		//round off problem with linux if use 0.6

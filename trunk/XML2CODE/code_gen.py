@@ -833,7 +833,7 @@ def generate_code(tree):
             print >>fo, "extern char* materializeCol(struct materializeNode * mn, struct statistic *);"
         else: # joinType == 2
             print >>fo, "extern struct tableNode* tcuJoin(struct joinNode *, struct statistic *, int *);"
-            print >>fo, "extern struct tableNode* groupBy(struct groupByNode *,struct statistic *);"
+            #print >>fo, "extern struct tableNode* groupBy(struct groupByNode *,struct statistic *);"
 
     else:              
         print >>fo, "#include <CL/cl.h>"
@@ -907,12 +907,14 @@ def generate_code(tree):
     print >>fo, "\t\t\t\tsetPath = 1;"
     print >>fo, "\t\t\t\tstrcpy(path,optarg);"
     print >>fo, "\t\t\t\tbreak;"
-    if joinType == 2:
+    if joinType == 2: # FIXME: for queries other than MM, user may not know dim, remove this arg later
         print >>fo, "\t\t\tcase '1':"
         print >>fo, "\t\t\t\t*matrix_dim_ptr = atoi(optarg);"
         print >>fo, "\t\t\t\tbreak;"
     print >>fo, "\t\t}"
     print >>fo, "\t}\n"
+
+#TODO: may remove the check of matrix_dim because there is a findMatWidth function in tcuJoin.cu
 
     if joinType == 2:
         print >>fo, "\tif(path == NULL || *matrix_dim_ptr == 0){"
@@ -2433,7 +2435,9 @@ def generate_code(tree):
         print >>fo, "\t}\n"
 
     # tcuJoin also requires gbNode for output ranking
-    if joinType == 0 or joinType == 1 or joinType == 2: 
+    # update: may not need if tcu also need to support join operator
+    #if joinType == 0 or joinType == 1 or joinType == 2: 
+    if joinType == 0 or joinType == 1: 
         if len(aggNode) >0 :
             """
             Generate codes for aggregation node.

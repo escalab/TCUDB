@@ -801,17 +801,17 @@ struct tableNode * hashJoin(struct joinNode *jNode, struct statistic *pp){
     res->content = (char **) malloc(res->totalAttr * sizeof(char *));
     CHECK_POINTER(res->content);
 
-    printf("leftOutputAttrNum: %d\n", jNode->leftOutputAttrNum);
+    //printf("leftOutputAttrNum: %d\n", jNode->leftOutputAttrNum);
     for(int i=0;i<jNode->leftOutputAttrNum;i++){
         int pos = jNode->leftPos[i];
         res->attrType[pos] = jNode->leftOutputAttrType[i];
         int index = jNode->leftOutputIndex[i];
-        printf("left index: %d\n", index);
+        //printf("left index: %d\n", index);
         res->attrSize[pos] = jNode->leftTable->attrSize[index];
         res->dataFormat[pos] = UNCOMPRESSED;
     }
 
-    printf("rightOutputAttrNum: %d\n", jNode->rightOutputAttrNum);
+    //printf("rightOutputAttrNum: %d\n", jNode->rightOutputAttrNum);
     for(int i=0;i<jNode->rightOutputAttrNum;i++){
         int pos = jNode->rightPos[i];
         res->attrType[pos] = jNode->rightOutputAttrType[i];
@@ -977,7 +977,7 @@ struct tableNode * hashJoin(struct joinNode *jNode, struct statistic *pp){
 
     CUDA_SAFE_CALL_NO_SYNC(cudaFree(gpu_bucket));
 
-    printf("res->totalAttr: %d\n", res->totalAttr);
+    //printf("res->totalAttr: %d\n", res->totalAttr);
     for(int i=0; i<res->totalAttr; i++){
 
         int index, pos;

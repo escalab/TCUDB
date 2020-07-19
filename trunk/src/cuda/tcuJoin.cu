@@ -493,12 +493,12 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
     //printf("left#: %d\n", leftTupleNum);
     //printf("right#: %d\n", rightTupleNum);
     //int matrix_width = findMatWidth(gpuTupleNum);
-    int matrix_width = findMatWidth(leftTupleNum*rightTupleNum);
+    //int matrix_width = findMatWidth(leftTupleNum*rightTupleNum);
     //printf("matrix width: %d\n", matrix_width);
     // parse user input dimension from command line
     int MATRIX_M, MATRIX_N, MATRIX_K;
-    //MATRIX_M = MATRIX_N = MATRIX_K = *matrix_dim;
-    MATRIX_M = MATRIX_N = MATRIX_K = matrix_width;
+    MATRIX_M = MATRIX_N = MATRIX_K = *matrix_dim;
+    //MATRIX_M = MATRIX_N = MATRIX_K = matrix_width;
     //printf("MATRIX_M: %d\n", MATRIX_M);
     //printf("MATRIX_N: %d\n", MATRIX_N);
     //printf("MATRIX_K: %d\n", MATRIX_K);
@@ -737,9 +737,11 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
     //clock_gettime(CLOCK_REALTIME,&chkRes_start);
 
     // Check result -- copy result back to the host for printing
-    //cudaErrCheck(cudaMemcpy(c_host_wmma, c_wmma, MATRIX_M * MATRIX_N * sizeof(float), cudaMemcpyDeviceToHost));
-    //printf("C\n");
-    //verify_result(c_host_wmma, MATRIX_M);
+    /*
+    cudaErrCheck(cudaMemcpy(c_host_wmma, c_wmma, MATRIX_M * MATRIX_N * sizeof(float), cudaMemcpyDeviceToHost));
+    printf("C\n");
+    verify_result(c_host_wmma, MATRIX_M);
+    */
 
     //cudaErrCheck(cudaMemcpy(c_host_cublas, c_cublas, MATRIX_M * MATRIX_N * sizeof(float), cudaMemcpyDeviceToHost));
     //cudaErrCheck(cudaMemcpy(c_host_sgemm, c_sgemm, MATRIX_M * MATRIX_N * sizeof(float), cudaMemcpyDeviceToHost));

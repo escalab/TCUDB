@@ -81,6 +81,87 @@ void cublasErrCheck_(cublasStatus_t stat, const char *file, int line) {
 }
 */
 
+__host__ void static verify_result(float * matrix, int width) {
+
+    int i;
+    for (i = 0; i < width*width; i++) {
+    //for (i = width*15; i < width*16; i++) {
+        //printf("%d\t", matrix[i]);
+        printf("%.2f\t", matrix[i]);
+        if ((i+1) % width == 0)
+            printf("\n");  
+    }
+
+}
+
+__host__ void static verify_result2(float * matrix, int length) {
+
+    int i;
+    for (i = 0; i < length; i++) {
+        printf("%.2f\t", matrix[i]);
+    }
+    printf("\n");
+}
+
+__host__ void transpose(float *in, float * out, int row, int col) {
+    for (int j = 0; j < row; j++) {
+        for (int i = 0; i < col; i++) {
+            out[j*col+i] = in[i*row+j];
+        }
+    }
+}
+
+/*
+ *  If the query only need to return the count of join result.
+ *  result t = mat1*mat.T
+ *  count = t.size - sum(t) -- how many non-zero in t
+ */
+__host__ int static tcu_match(struct joinNode *jNode, int width,
+        int attr_num1, int attr_num2, int attr_type1, int attr_type2) {
+    float *A, *B, *B_transpose;
+
+    int A_tupleNum = jNode->leftTable->tupleNum;
+    int B_tupleNum = jNode->rightTable->tupleNum;
+
+    A = (float*)calloc(A_tupleNum * width, sizeof(float));
+    B = (float*)calloc(B_tupleNum * width, sizeof(float));
+    B_transpose = (float*)calloc(width * B_tupleNum, sizeof(float));
+
+    //TODO: create 2 matrices and transpose B for later MM
+
+    // create first matrix
+    int i, colContIdx; // index of column content
+    colContIdx = 0;
+    for (i = 0; i < A_tupleNum; i++) {
+        int *colCont;   // content of column
+        colCont = (int*)(&jNode->leftTable->content[jNode->leftKeyIndex][colContIdx]);
+        colContIdx += attr_type1; // 4 because of INT type
+        A[i*width+(*colCont)] = 1.0; // mark as 1 if appear in the matrix
+    }
+
+    // create second matrix
+    colContIdx = 0;
+    for (i = 0; i < B_tupleNum; i++) {
+        int *colCont;
+        colCont = (int*)(&jNode->rightTable->content[jNode->rightKeyIndex][colContIdx]);
+        colContIdx += attr_type1;
+        B[i*width+(*colCont)] = 1.0;
+    }
+
+    // transpose second matrix
+    transpose(B, B_transpose, B_tupleNum, width);
+    printf("A\n");
+    verify_result2(A, A_tupleNum * width);
+    printf("B\n");
+    verify_result2(B, B_tupleNum * width);
+    //printf("B_transpose\n");
+    //verify_result2(B_transpose, width * B_tupleNum);
+
+    // MM & return count
+    
+
+}
+
 /* Map the table entires into matrix for tensor core to use 
  * Assum both matrix have the same dimension and the value in INT type for now, e.g., both 16x16 dim
  * To support multiple types, this function need to be modified
@@ -207,18 +288,7 @@ __host__ void static verify_col(float * matrix, int width) {
     }
     printf("\n");
 }
-__host__ void static verify_result(float * matrix, int width) {
 
-    int i;
-    for (i = 0; i < width*width; i++) {
-    //for (i = width*15; i < width*16; i++) {
-        //printf("%d\t", matrix[i]);
-        printf("%.2f\t", matrix[i]);
-        if ((i+1) % width == 0)
-            printf("\n");  
-    }
-
-}
 /* Printf matrix for debugging */
 //__host__ void static print_matrix(int * matrix, int width) {
 //__host__ void static print_matrix(float * matrix, int width) { // correct!
@@ -644,9 +714,13 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
     }
 */
     clock_gettime(CLOCK_REALTIME, &fill_start); 
+    tcu_match(jNode, MATRIX_M, jNode->leftTable->totalAttr, jNode->rightTable->totalAttr, jNode->leftTable->attrType[0], jNode->rightTable->attrType[0]);
+    /*    
     micro_mm(jNode, h_fp32_A, h_fp32_B, MATRIX_M,
             jNode->leftTable->totalAttr, jNode->rightTable->totalAttr, jNode->leftTable->attrType[0], jNode->rightTable->attrType[0]);
 
+    */
+            
     clock_gettime(CLOCK_REALTIME, &fill_end);
     //printf("A\n");
     //verify_result(h_fp32_A, MATRIX_M);

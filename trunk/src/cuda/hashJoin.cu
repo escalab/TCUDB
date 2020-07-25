@@ -51,8 +51,7 @@ const int WMMA_K = 16;
 void cudaErrCheck_(cudaError_t stat, const char *file, int line) {
     if (stat != cudaSuccess) {
         fprintf(stderr, "CUDA Error: %s %s %d\n", cudaGetErrorString(stat), file, line);
-    }
-}
+    }}
 
 #define curandErrCheck(stat) { curandErrCheck_((stat), __FILE__, __LINE__); }
 void curandErrCheck_(curandStatus_t stat, const char *file, int line) {
@@ -78,8 +77,8 @@ __global__ static void count_hash_num(char *dim, long  inNum,int *num,int hsize)
     int offset = blockIdx.x * blockDim.x + threadIdx.x;
 
     for(int i=offset;i<inNum;i+=stride){
-        int joinKey = ((int *)dim)[i]; // 0 1 1 2 2 -- mat2.i
-        int hKey = joinKey & (hsize-1);
+        int joinKey = ((int *)dim)[i]; // dim table join key content
+        int hKey = joinKey & (hsize-1); // seems like hash into different buckets
         atomicAdd(&(num[hKey]),1);
     }
 }
@@ -101,7 +100,7 @@ __global__ static void build_hash_table(char *dim, long inNum, int *psum, char *
     for(int i=offset;i<inNum;i+=stride){
         int joinKey = ((int *) dim)[i]; 
         int hKey = joinKey & (hsize-1);
-        int pos = atomicAdd(&psum[hKey],1) * 2;
+        int pos = atomicAdd(&psum[hKey],1) * 2; // 2 -- 2*primaryKeySize for gpu_bucket
         ((int*)bucket)[pos] = joinKey;
         pos += 1;
         int dimId = i+1;
@@ -121,7 +120,7 @@ __global__ static void count_join_result_dict(int *num, int* psum, char* bucket,
     for(int i=offset;i<dNum;i+=stride){
         int fkey = dheader->hash[i];
         int hkey = fkey &(hsize-1);
-        int keyNum = num[hkey];
+        int keyNum = num[hkey]; 
         int fvalue = 0;
 
         for(int j=0;j<keyNum;j++){
@@ -270,14 +269,14 @@ __global__ static void count_join_result(int* num, int* psum, char* bucket, char
     long offset = blockIdx.x*blockDim.x + threadIdx.x;
 
     for(int i=offset;i<inNum;i+=stride){
-        int fkey = ((int *)(fact))[i]; // fact table match condition 
+        int fkey = ((int *)(fact))[i]; // foreign key of fact table 
         int hkey = fkey &(hsize-1); 
-        int keyNum = num[hkey];
+        int keyNum = num[hkey]; // gpu_hashNum -- sizeof(int)*hsize
         int fvalue = 0;
 
         for(int j=0;j<keyNum;j++){
-            int pSum = psum[hkey];
-            int dimKey = ((int *)(bucket))[2*j + 2*pSum];
+            int pSum = psum[hkey]; // starting position of each bucket
+            int dimKey = ((int *)(bucket))[2*j + 2*pSum]; // retrieve dim primary key from bucket
             
             if( dimKey == fkey){
                 int dimId = ((int *)(bucket))[2*j + 2*pSum + 1];
@@ -287,7 +286,7 @@ __global__ static void count_join_result(int* num, int* psum, char* bucket, char
                 break; // cannot support multi-matched tuples
             }
         }
-        factFilter[i] = fvalue;
+        factFilter[i] = fvalue; // factFilter -- sizeof(int)*leftTupleNum
     }
     count[offset] = lcount;
 }
@@ -758,6 +757,26 @@ __host__ void static convertIntToFp32(float *out, int *in, int width) {
  *  A new table node
  */
 struct tableNode * hashJoin(struct joinNode *jNode, struct statistic *pp){
+    /*
+    int x, y;
+    for (x = 0; x < 3; x++) {
+        int idx = jNode->rightTable->attrIndex[x];
+        //int idx = jNode->leftTable->attrIndex[x];
+        //printf("idx: %d\tx: %d\n", idx, x);
+        for (y = 0; y < jNode->rightTable->tupleNum * 4; y +=4) {
+        //for (y = 0; y < jNode->leftTable->tupleNum * 4; y +=4) {
+            int *temp;
+            temp = (int*)(&jNode->rightTable->content[x][y]);
+            //temp = (int*)(&jNode->leftTable->content[x][y]);
+
+            if (idx == 1) // mat A 0: i; 1: j | mat B 0:i; 1:j
+                printf("idx: %d\tx: %d\n", idx, x);
+                printf("%d\n", *temp);
+
+        }
+    }
+    //printf("leftKeyIndex: %d\n", jNode->rightTable->attrIndex[2]);
+    */
 
     struct timespec start,end; // hashJoin overall timing
     clock_gettime(CLOCK_REALTIME,&start);
@@ -843,7 +862,7 @@ struct tableNode * hashJoin(struct joinNode *jNode, struct statistic *pp){
 
     int hsize = jNode->rightTable->tupleNum;
     //printf("hsize: %d\n", hsize); // hsize seems to be used for count_group_num
-    NP2(hsize);
+    NP2(hsize); // return hsize the nearest power of 2
 
     //printf("after NP2 function hsize: %d\n", hsize); // 8
     CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&gpu_hashNum,sizeof(int)*hsize));

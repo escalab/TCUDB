@@ -104,9 +104,9 @@ __host__ void static verify_result2(float * matrix, int length) {
 }
 
 __host__ void transpose(float *in, float * out, int row, int col) {
-    for (int j = 0; j < row; j++) {
-        for (int i = 0; i < col; i++) {
-            out[j*col+i] = in[i*row+j];
+    for (int i = 0; i < row; i++) {
+        for (int j = 0; j < col; j++) {
+            out[j*row+i] = in[i*col+j];
         }
     }
 }
@@ -150,10 +150,10 @@ __host__ int static tcu_match(struct joinNode *jNode, int width,
 
     // transpose second matrix
     transpose(B, B_transpose, B_tupleNum, width);
-    printf("A\n");
-    verify_result2(A, A_tupleNum * width);
-    printf("B\n");
-    verify_result2(B, B_tupleNum * width);
+    //printf("A\n");
+    //verify_result2(A, A_tupleNum * width);
+    //printf("B\n");
+    //verify_result2(B, B_tupleNum * width);
     //printf("B_transpose\n");
     //verify_result2(B_transpose, width * B_tupleNum);
 

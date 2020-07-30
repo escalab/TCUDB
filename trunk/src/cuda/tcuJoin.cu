@@ -561,9 +561,9 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
     //printf("matrix width: %d\n", matrix_width);
     // parse user input dimension from command line
     int MATRIX_M, MATRIX_N, MATRIX_K;
-    MATRIX_M = leftTupleNum;
-    MATRIX_N = rightTupleNum;
-    MATRIX_K = *matrix_dim;
+    MATRIX_M = nearestMultipleN(leftTupleNum, 16);
+    MATRIX_N = nearestMultipleN(rightTupleNum, 16);
+    MATRIX_K = *matrix_dim; // user input, matrix width
     //MATRIX_M = MATRIX_N = MATRIX_K = matrix_width;
     //printf("MATRIX_M: %d\n", MATRIX_M);
     //printf("MATRIX_N: %d\n", MATRIX_N);
@@ -750,13 +750,13 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
             
     clock_gettime(CLOCK_REALTIME, &fill_end);
     
-    printf("A\n");
-    verify_result(h_fp32_A, MATRIX_M, MATRIX_K);
+//    printf("A\n");
+//    verify_result(h_fp32_A, MATRIX_M, MATRIX_K);
     //printf("B\n");
     //verify_result(h_fp32_B, MATRIX_N, MATRIX_K);
     transpose(h_fp32_B, h_fp32_B_T, MATRIX_N, MATRIX_K);
-    printf("B.T\n");
-    verify_result(h_fp32_B_T, MATRIX_K, MATRIX_N);
+//    printf("B.T\n");
+//    verify_result(h_fp32_B_T, MATRIX_K, MATRIX_N);
     
 
 //    CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(d_int_B, h_int_B, sizeof(int) * MATRIX_N * MATRIX_K, cudaMemcpyHostToDevice));
@@ -868,8 +868,8 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
 //    convertFp16ToFp32<<< (MATRIX_M * MATRIX_N + 255) / 256, 256 >>> (d_wmma_sum2, c_wmma_sum2, MATRIX_M * MATRIX_N);
     cudaErrCheck(cudaMemcpy(c_host_wmma, c_wmma, MATRIX_M * MATRIX_N * sizeof(float), cudaMemcpyDeviceToHost));
     //cudaErrCheck(cudaMemcpy(c_host_wmma, c_wmma_sum2, MATRIX_M * MATRIX_N * sizeof(float), cudaMemcpyDeviceToHost));
+    //verify_result(c_host_wmma, MATRIX_M, MATRIX_N);
     //printf("Number of join results: %.0f\n", c_host_wmma[0]);
-    verify_result(c_host_wmma, MATRIX_M, MATRIX_N);
     printf("sum of c_host_wmma: %d\n", sum_matrix(c_host_wmma, MATRIX_M, MATRIX_N));
     
 

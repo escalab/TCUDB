@@ -77,9 +77,17 @@ void cublasErrCheck_(cublasStatus_t stat, const char *file, int line) {
 __host__ void static verify_result(float * matrix, int height, int width) {
     int i;
     for (i = 0; i < height*width; i++) {
-    //for (i = width*15; i < width*16; i++) {
-        //printf("%d\t", matrix[i]);
         printf("%.0f\t", matrix[i]);
+        if ((i+1) % width == 0)
+            printf("\n\n");  
+    }
+
+}
+
+__host__ void static verify_result_int(int * matrix, int height, int width) {
+    int i;
+    for (i = 0; i < height*width; i++) {
+        printf("%d\t", matrix[i]);
         if ((i+1) % width == 0)
             printf("\n\n");  
     }
@@ -95,7 +103,11 @@ __host__ void transpose(float *in, float *out, int row, int col) {
     }
 }
 
+#ifdef WMMA_HALF
 __host__ int sum_matrix(float *mat, int height, int width) {
+#elif WMMA_INT4
+__host__ int sum_matrix(int *mat, int height, int width) {
+#endif
     int i, sum = 0;
     for (i = 0; i < height*width; i++)
         sum += mat[i];
@@ -117,9 +129,13 @@ __host__ int nearestMultipleN(int inNum, int n) {
  *  result t = mat1*mat.T
  *  count = t.size - sum(t) -- how many non-zero in t
  */
+#ifdef WMMA_HALF
 __host__ void static tcu_match(struct joinNode *jNode, int width,
          float *A, float *B, int attr_type1, int attr_type2) {
-
+#elif WMMA_INT4
+__host__ void static tcu_match(struct joinNode *jNode, int width,
+         signed char *A, signed char *B, int attr_type1, int attr_type2) {
+#endif
     int A_tupleNum = jNode->leftTable->tupleNum;
     int B_tupleNum = jNode->rightTable->tupleNum;
 
@@ -425,6 +441,60 @@ __global__ void wmma_example(half *a, half *b, float *c, int M, int N, int K, fl
     }
 }
 
+__global__ void wmma_int(signed char *a, signed char *b, int *c, int M, int N, int K, int alpha, int beta) {
+    // Leading dimensions. Packed with no transpositions.
+    int lda = M;
+    int ldb = K;
+    int ldc = M;
+
+    // Tile using a 2D grid
+    int warpM = (blockIdx.x * blockDim.x + threadIdx.x) / warpSize;
+    int warpN = (blockIdx.y * blockDim.y + threadIdx.y);
+
+    // Declare the fragments
+    wmma::fragment<wmma::matrix_a, WMMA_M, WMMA_N, WMMA_K, signed char, wmma::row_major> a_frag;
+    wmma::fragment<wmma::matrix_b, WMMA_M, WMMA_N, WMMA_K, signed char, wmma::col_major> b_frag;
+    wmma::fragment<wmma::accumulator, WMMA_M, WMMA_N, WMMA_K, int> acc_frag;
+    wmma::fragment<wmma::accumulator, WMMA_M, WMMA_N, WMMA_K, int> c_frag;
+
+    wmma::fill_fragment(acc_frag, 0);
+
+    // Loop over k
+    for (int i = 0; i < K; i += WMMA_K) {
+        int aRow = warpM * WMMA_M;
+        int aCol = i;
+
+        int bRow = i;
+        int bCol = warpN * WMMA_N;
+
+        // Bounds checking
+        if (aRow < M && aCol < K && bRow < K && bCol < N) { 
+            // Load the inputs
+            wmma::load_matrix_sync(a_frag, a + aRow + aCol * lda, lda);
+            wmma::load_matrix_sync(b_frag, b + bRow + bCol * ldb, ldb);
+
+            // Perform the matrix multiplication
+            wmma::mma_sync(acc_frag, a_frag, b_frag, acc_frag);
+        }
+
+    }
+
+    // Load in the current value of c, scale it by beta, and add this our result scaled by alpha
+    int cRow = warpM * WMMA_M;
+    int cCol = warpN * WMMA_N;
+
+    if (cRow < M && cCol < N) {
+        wmma::load_matrix_sync(c_frag, c + cRow + cCol * ldc, ldc, wmma::mem_row_major);
+
+        for(int i=0; i < c_frag.num_elements; i++) {
+            c_frag.x[i] = alpha * acc_frag.x[i] + beta * c_frag.x[i];
+        }
+
+        // Store the output
+        wmma::store_matrix_sync(c + cRow + cCol * ldc, c_frag, ldc, wmma::mem_row_major);
+    }
+}
+
 /*
  * tcuJoinn using NVIDIA's WMMA lib to perform matrix multiplication can aggregation..
  *
@@ -469,9 +539,9 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
     clock_gettime(CLOCK_REALTIME, &init_start);
 
 #ifdef WMMA_INT4
-    unsigned char *h_int_A, *h_int_B; // host int4 array
-    unsigned char *d_int_A, *d_int_B; // device int4 array
-    unsigned char *c_int_wmma, *c_host_int_wmma;
+    signed char *h_int_A, *h_int_B; // host int4 array
+    signed char *d_int_A, *d_int_B; // device int4 array
+    int *c_int_wmma, *c_host_int_wmma;
     int alpha = 1;
     int beta = 0;
 #else
@@ -541,11 +611,10 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
 #endif
    
 #ifdef WMMA_INT4
-    h_int_A = (unsigned char*)calloc(MATRIX_M*MATRIX_K, sizeof(unsigned char));
-    h_int_B = (unsigned char*)calloc(MATRIX_K*MATRIX_N, sizeof(unsigned char));
-    CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&d_int_A, MATRIX_M * MATRIX_K * sizeof(unsigned char)));
-    CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&d_int_B, MATRIX_K * MATRIX_N * sizeof(unsigned char)));
-    CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&c_int_wmma, MATRIX_M * MATRIX_N * sizeof(int)));
+    h_int_A = (signed char*)calloc(MATRIX_M*MATRIX_K, sizeof(signed char));
+    h_int_B = (signed char*)calloc(MATRIX_K*MATRIX_N, sizeof(signed char));
+    CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&d_int_A, MATRIX_M * MATRIX_K * sizeof(signed char)));
+    CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&d_int_B, MATRIX_K * MATRIX_N * sizeof(signed char)));
 
 #else
     h_fp32_A = (float*)calloc(MATRIX_M*MATRIX_K, sizeof(float));
@@ -573,7 +642,7 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
 
     clock_gettime(CLOCK_REALTIME, &fill_start); 
 #ifdef WMMA_INT4
-
+    tcu_match(jNode, MATRIX_K, h_int_A, h_int_B, jNode->leftTable->attrType[0], jNode->rightTable->attrType[0]);
 #elif WMMA_HALF    
     tcu_match(jNode, MATRIX_K, h_fp32_A, h_fp32_B, jNode->leftTable->attrType[0], jNode->rightTable->attrType[0]);
     /*    
@@ -587,8 +656,8 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
 
     clock_gettime(CLOCK_REALTIME, &cuMemcpy_start);
 #ifdef WMMA_INT4
-    CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(d_int_A, h_int_A, sizeof(unsigned char) * MATRIX_M * MATRIX_K, cudaMemcpyHostToDevice));
-    CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(d_int_B, h_int_B, sizeof(unsigned char) * MATRIX_K * MATRIX_N, cudaMemcpyHostToDevice));
+    CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(d_int_A, h_int_A, sizeof(signed char) * MATRIX_M * MATRIX_K, cudaMemcpyHostToDevice));
+    CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(d_int_B, h_int_B, sizeof(signed char) * MATRIX_K * MATRIX_N, cudaMemcpyHostToDevice));
 #else
     CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(d_fp32_A, h_fp32_A, sizeof(float) * MATRIX_M * MATRIX_K, cudaMemcpyHostToDevice));
     CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(d_fp32_B, h_fp32_B, sizeof(float) * MATRIX_K * MATRIX_N, cudaMemcpyHostToDevice));
@@ -613,6 +682,7 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
     cudaErrCheck(cudaEventRecord(startWMMA));
     wmma_example <<< gridDim, blockDim >>> (d_fp16_A, d_fp16_B, c_wmma, MATRIX_M, MATRIX_N, MATRIX_K, alpha, beta); 
     
+    // perform additional two wmma for reduction, sum will be c_host_wmma[0]
     half *c_wmma_reduction1, *c_wmma_reduction2;
     CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void **)&c_wmma_reduction1, MATRIX_M * MATRIX_N * sizeof(half)));
     CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void **)&c_wmma_reduction2, MATRIX_M * MATRIX_N * sizeof(half)));
@@ -624,6 +694,14 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
     wmma_example <<< gridDim, blockDim >>> (d_fp16_mask2, c_wmma_reduction2, c_wmma_sum2, MATRIX_M, MATRIX_N, MATRIX_M, alpha, beta); 
     
     cudaErrCheck(cudaEventRecord(stopWMMA));
+#elif WMMA_INT4
+    printf("\nM = %d, N = %d, K = %d. alpha = %d, beta = %d\n\n", MATRIX_M, MATRIX_N, MATRIX_K, alpha, beta);
+
+    printf("Running with wmma_INT4...\n");
+    cudaErrCheck(cudaEventRecord(startWMMA));
+    wmma_int <<< gridDim, blockDim >>> (d_int_A, d_int_B, c_int_wmma, MATRIX_M, MATRIX_N, MATRIX_K, 1, 0); 
+    cudaErrCheck(cudaEventRecord(stopWMMA));
+
 #elif CUBLAS_HALF
     printf("Running with cuBLAS on TCUs...\n");
     cudaErrCheck(cudaEventRecord(startcublasEX));
@@ -654,6 +732,16 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
     printf("Number of join results (MM reduction): %.0f\n", c_host_wmma[0]);
     printf("Number of join results (CPU count): %d\n", sum_matrix(c_host_wmma, MATRIX_M, MATRIX_N));
     clock_gettime(CLOCK_REALTIME, &tmp_end);
+#elif WMMA_INT4
+    struct timespec tmp_start, tmp_end;
+    clock_gettime(CLOCK_REALTIME, &tmp_start);
+    cudaErrCheck(cudaMemcpy(c_host_int_wmma, c_int_wmma, MATRIX_M * MATRIX_N * sizeof(float), cudaMemcpyDeviceToHost));
+
+    printf("c_host_int_wmma:\n");
+    verify_result_int(c_host_int_wmma, MATRIX_M, MATRIX_N);
+    printf("Number of join results (CPU count): %d\n", sum_matrix(c_host_int_wmma, MATRIX_M, MATRIX_N));
+    clock_gettime(CLOCK_REALTIME, &tmp_end);
+
 #elif CUBLAS_HALF
     cudaErrCheck(cudaMemcpy(c_host_cublas, c_cublas, MATRIX_M * MATRIX_N * sizeof(float), cudaMemcpyDeviceToHost));
 #elif CUBLAS

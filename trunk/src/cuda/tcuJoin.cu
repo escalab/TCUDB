@@ -567,6 +567,7 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
     printf("MATRIX_K: %d\n", MATRIX_K);
 #endif
 
+    struct timespec debug_start, debug_end;
     struct timespec tcu_start, tcu_end;
     struct timespec init_start, init_end;
     struct timespec fill_start, fill_end;
@@ -599,7 +600,7 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
 
 #ifdef CUBLAS_HALF
     float *c_cublas, *c_host_cublas;
-    curandGenerator_t gen;
+    //curandGenerator_t gen;
     // use tensor core or cublas
     cublasHandle_t cublasHandle; // cublas tcu
     cudaEvent_t startcublasEX;
@@ -607,12 +608,15 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
 
     cudaErrCheck(cudaEventCreate(&startcublasEX));
     cudaErrCheck(cudaEventCreate(&stopcublasEX));
+    // TODO: is this overhead fixed?
+    clock_gettime(CLOCK_REALTIME, &debug_start);
     cublasErrCheck(cublasCreate(&cublasHandle));
+    clock_gettime(CLOCK_REALTIME, &debug_end);
     // enable tensor core
     cublasErrCheck(cublasSetMathMode(cublasHandle, CUBLAS_TENSOR_OP_MATH));
 #elif CUBLAS
     float *c_sgemm, *c_host_sgemm;
-    curandGenerator_t gen;
+    //curandGenerator_t gen;
     cublasHandle_t cublasHandle_default; // cublas default
     cudaEvent_t startcublas; // for sgemm (FP32)
     cudaEvent_t stopcublas;
@@ -759,12 +763,12 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
     printf("Running with cuBLAS on TCUs...\n");
     cudaErrCheck(cudaEventRecord(startcublasEX));
     cublasErrCheck(cublasGemmEx(cublasHandle, CUBLAS_OP_T, CUBLAS_OP_N,
-                MATRIX_M, MATRIX_N, MATRIX_K,
+                MATRIX_N, MATRIX_M, MATRIX_K,
                 &alpha,
-                d_fp16_A, CUDA_R_16F, MATRIX_M,
                 d_fp16_B, CUDA_R_16F, MATRIX_N,
+                d_fp16_A, CUDA_R_16F, MATRIX_K,
                 &beta,
-                c_cublas, CUDA_R_32F, MATRIX_K,
+                c_cublas, CUDA_R_32F, MATRIX_N,
                 CUDA_R_32F, CUBLAS_GEMM_DFALT_TENSOR_OP)); // tcu
     cudaErrCheck(cudaEventRecord(stopcublasEX));
 #elif CUBLAS
@@ -778,10 +782,10 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
     struct timespec tmp_start, tmp_end;
     clock_gettime(CLOCK_REALTIME, &tmp_start);
     cudaErrCheck(cudaMemcpy(c_host_wmma, c_wmma_sum2, MATRIX_M * MATRIX_N * sizeof(float), cudaMemcpyDeviceToHost));
-
-    //printf("c_host_wmma:\n");
-    //verify_result(c_host_wmma, MATRIX_M, MATRIX_N);
-
+#ifdef DEBUG
+    printf("c_host_wmma:\n");
+    verify_result(c_host_wmma, MATRIX_M, MATRIX_N);
+#endif
     printf("Number of join results (MM reduction): %.0f\n", c_host_wmma[0]);
     printf("Number of join results (CPU count): %d\n", sum_matrix(c_host_wmma, MATRIX_M, MATRIX_N));
     clock_gettime(CLOCK_REALTIME, &tmp_end);
@@ -789,9 +793,10 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
     struct timespec tmp_start, tmp_end;
     clock_gettime(CLOCK_REALTIME, &tmp_start);
     cudaErrCheck(cudaMemcpy(c_host_int_wmma, c_int_wmma, MATRIX_M * MATRIX_N * sizeof(float), cudaMemcpyDeviceToHost));
-
+#ifdef DEBUG
     printf("c_host_int_wmma:\n");
     verify_result_int(c_host_int_wmma, MATRIX_M, MATRIX_N);
+#endif
     printf("Number of join results (CPU count): %d\n", sum_matrix_int(c_host_int_wmma, MATRIX_M, MATRIX_N));
     clock_gettime(CLOCK_REALTIME, &tmp_end);
 
@@ -829,8 +834,10 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
 
     cudaErrCheck(cudaEventSynchronize(stopcublasEX));
     cudaErrCheck(cudaEventElapsedTime(&cublasEXTime, startcublasEX, stopcublasEX));
+#ifdef DEBUG
     printf("c_host_cublas:\n");
     verify_result(c_host_cublas, MATRIX_M, MATRIX_N);
+#endif
     clock_gettime(CLOCK_REALTIME, &count_start);
     cublasStatus_t ret;
     ret = cublasCreate(&cublasHandle);
@@ -900,6 +907,7 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
     double cuMemcpy_elapse = (cuMemcpy_end.tv_sec -  cuMemcpy_start.tv_sec)* BILLION + cuMemcpy_end.tv_nsec - cuMemcpy_start.tv_nsec;
 #ifdef CUBLAS_HALF
     double count_elapse = (count_end.tv_sec -  count_start.tv_sec)* BILLION + count_end.tv_nsec - count_start.tv_nsec;
+    double debug_elapse = (debug_end.tv_sec -  debug_start.tv_sec)* BILLION + debug_end.tv_nsec - debug_start.tv_nsec;
 #endif
 #ifdef WMMA_HALF
     double tmp_elapse = (tmp_end.tv_sec -  tmp_start.tv_sec)* BILLION + tmp_end.tv_nsec - tmp_start.tv_nsec;
@@ -912,6 +920,7 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
     printf("MMA end-to-end: %lf(ms)\n", tcu_elapse/(1000*1000));
 #ifdef CUBLAS_HALF
     printf("cublasEX sum counting: %lf(ms)\n", count_elapse/(1000*1000));
+    printf("debug (cublasCreate): %lf(ms)\n", debug_elapse/(1000*1000));
 #endif
 #ifdef WMMA_HALF
     printf("Result verification: %lf(ms)\n", tmp_elapse/(1000*1000));

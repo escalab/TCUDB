@@ -546,7 +546,10 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
     printf("MATRIX_K: %d\n", MATRIX_K);
 #endif
 
+#if defined(CUBLAS_HALF) || defined(CUBLAS)
     struct timespec debug_start, debug_end;
+    struct timespec count_start, count_end;
+#endif
     struct timespec tcu_start, tcu_end;
     struct timespec init_start, init_end;
     struct timespec fill_start, fill_end;
@@ -605,7 +608,9 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
 
     cudaErrCheck(cudaEventCreate(&startcublas));
     cudaErrCheck(cudaEventCreate(&stopcublas));
+    clock_gettime(CLOCK_REALTIME, &debug_start);
     cublasErrCheck(cublasCreate(&cublasHandle_default));
+    clock_gettime(CLOCK_REALTIME, &debug_end);
     cublasErrCheck(cublasSetMathMode(cublasHandle_default, CUBLAS_DEFAULT_MATH));
 #else
     cudaEvent_t startWMMA;
@@ -721,13 +726,19 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
     clock_gettime(CLOCK_REALTIME, &convert_start); // if float->half
 #if defined(WMMA_HALF) || defined(CUBLAS_HALF)
     convertFp32ToFp16<<< (MATRIX_M * MATRIX_K + 255) / 256, 256 >>> (d_fp16_A, d_fp32_A, MATRIX_M * MATRIX_K);
+    cudaErrCheck(cudaFree(d_fp32_A));
 #endif
 #ifdef WMMA_HALF
     convertFp32ToFp16<<< (MATRIX_K * MATRIX_N + 255) / 256, 256 >>> (d_fp16_B, d_fp32_B, MATRIX_K * MATRIX_N);
     convertFp32ToFp16<<< (MATRIX_N * MATRIX_K + 255) / 256, 256 >>> (d_fp16_mask, d_fp32_mask, MATRIX_M * MATRIX_N);
     convertFp32ToFp16<<< (MATRIX_N * MATRIX_K + 255) / 256, 256 >>> (d_fp16_mask2, d_fp32_mask2, MATRIX_M * MATRIX_N);
+    cudaErrCheck(cudaFree(d_fp32_B));
+    cudaErrCheck(cudaFree(d_fp32_mask));
+    cudaErrCheck(cudaFree(d_fp32_mask2));
 #elif CUBLAS_HALF
     convertFp32ToFp16<<< (MATRIX_K * MATRIX_N + 255) / 256, 256 >>> (d_fp16_BT, d_fp32_BT, MATRIX_K * MATRIX_N);
+    //cudaErrCheck(cudaFree(d_fp32_A));
+    cudaErrCheck(cudaFree(d_fp32_BT));
 #endif
     clock_gettime(CLOCK_REALTIME, &convert_end);
 #ifdef WMMA_HALF 
@@ -736,6 +747,8 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
     printf("Running with wmma...\n");
     cudaErrCheck(cudaEventRecord(startWMMA));
     wmma_example <<< gridDim, blockDim >>> (d_fp16_A, d_fp16_B, c_wmma, MATRIX_M, MATRIX_N, MATRIX_K, alpha, beta); 
+    cudaErrCheck(cudaFree(d_fp16_A));
+    cudaErrCheck(cudaFree(d_fp16_B));
     // TODO: mask for WMMA has some bugs 
     // perform additional two wmma for reduction, sum will be c_host_wmma[0]
     /*
@@ -749,6 +762,7 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
 
     wmma_example <<< gridDim, blockDim >>> (d_fp16_mask2, c_wmma_reduction2, c_wmma_sum2, MATRIX_M, MATRIX_N, MATRIX_M, alpha, beta); 
     */
+    cudaErrCheck(cudaFree(d_fp16_mask2));
     cudaErrCheck(cudaEventRecord(stopWMMA));
 
 #elif WMMA_INT4
@@ -757,6 +771,8 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
     printf("Running with wmma_INT4...\n");
     cudaErrCheck(cudaEventRecord(startWMMA));
     wmma_int <<< gridDim, blockDim >>> (d_int_A, d_int_B, c_int_wmma, MATRIX_M, MATRIX_N, MATRIX_K, 1, 0); 
+    cudaErrCheck(cudaFree(d_int_A));
+    cudaErrCheck(cudaFree(d_int_B));
     cudaErrCheck(cudaEventRecord(stopWMMA));
 
 #elif CUBLAS_HALF
@@ -772,6 +788,8 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
                 CUDA_R_32F, CUBLAS_GEMM_DFALT_TENSOR_OP)); // tcu
     
     cudaErrCheck(cudaEventRecord(stopcublasEX));
+    cudaErrCheck(cudaFree(d_fp16_A));
+    cudaErrCheck(cudaFree(d_fp16_BT));
 #elif CUBLAS
     printf("Running with sgemm...\n");
     cudaErrCheck(cudaEventRecord(startcublas));
@@ -783,12 +801,15 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
             &beta,
             c_sgemm, MATRIX_N);
     cudaErrCheck(cudaEventRecord(stopcublas));
+    cudaErrCheck(cudaFree(d_fp32_A));
+    cudaErrCheck(cudaFree(d_fp32_BT));
 #endif    
 
 #ifdef WMMA_HALF
     struct timespec tmp_start, tmp_end;
     clock_gettime(CLOCK_REALTIME, &tmp_start);
     cudaErrCheck(cudaMemcpy(c_host_wmma, c_wmma, MATRIX_M * MATRIX_N * sizeof(float), cudaMemcpyDeviceToHost));
+    cudaErrCheck(cudaFree(c_wmma));
 #ifdef DEBUG
     printf("c_host_wmma:\n");
     verify_result(c_host_wmma, MATRIX_M, MATRIX_N);
@@ -800,6 +821,7 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
     struct timespec tmp_start, tmp_end;
     clock_gettime(CLOCK_REALTIME, &tmp_start);
     cudaErrCheck(cudaMemcpy(c_host_int_wmma, c_int_wmma, MATRIX_M * MATRIX_N * sizeof(float), cudaMemcpyDeviceToHost));
+    cudaErrCheck(cudaFree(c_int_wmma));
 #ifdef DEBUG
     printf("c_host_int_wmma:\n");
     verify_result_int(c_host_int_wmma, MATRIX_M, MATRIX_N);
@@ -815,7 +837,9 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
     clock_gettime(CLOCK_REALTIME, &cb_end);
 #endif
 #elif CUBLAS
+#ifdef DEBUG
     cudaErrCheck(cudaMemcpy(c_host_sgemm, c_sgemm, MATRIX_M * MATRIX_N * sizeof(float), cudaMemcpyDeviceToHost));
+#endif
 #endif
 
     // print error checking, cublasGemmEx and cublas
@@ -842,7 +866,7 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
     */
 #ifdef CUBLAS_HALF
     float cublasEXTime;
-    struct timespec count_start, count_end;
+    //struct timespec count_start, count_end;
 
     cudaErrCheck(cudaEventSynchronize(stopcublasEX));
     cudaErrCheck(cudaEventElapsedTime(&cublasEXTime, startcublasEX, stopcublasEX));
@@ -868,10 +892,12 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
 
     cudaErrCheck(cudaEventSynchronize(stopcublas));
     cudaErrCheck(cudaEventElapsedTime(&cublasTime, startcublas, stopcublas));
+    clock_gettime(CLOCK_REALTIME, &count_start);
     cublasStatus_t sgemm_ret;
     sgemm_ret = cublasCreate(&cublasHandle_default);
     float *cbsgemm_res = (float*)malloc(sizeof(float));
     sgemm_ret = cublasSasum(cublasHandle_default, MATRIX_M*MATRIX_N, c_sgemm, 1, cbsgemm_res);
+    clock_gettime(CLOCK_REALTIME, &count_end);
     printf("c_host_sgemm sum: %.0f\n", *cbsgemm_res);
     printf("cublas sgemm (FP32) took %fms\n", cublasTime);
 
@@ -886,47 +912,53 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
     cudaErrCheck(cudaEventElapsedTime(&wmmaTime, startWMMA, stopWMMA));
     printf("wmma took %fms\n", wmmaTime);
 
-    // free those data structures
     cudaErrCheck(cudaEventDestroy(startWMMA));
     cudaErrCheck(cudaEventDestroy(stopWMMA));
 #endif
 
+// free those data structures
 #ifdef WMMA_HALF
+    free(h_fp32_A);
+    free(h_fp32_B);
+    free(h_fp32_mask2);
     free(c_host_wmma);
-    cudaErrCheck(cudaFree(c_wmma));
-#endif
-
-#ifdef WMMA_INT4
+    //cudaErrCheck(cudaFree(c_wmma));
+    //cudaErrCheck(cudaFree(d_fp32_mask2));
+    //cudaErrCheck(cudaFree(d_fp16_mask2));
+    //cudaErrCheck(cudaFree(d_fp32_A));
+    //cudaErrCheck(cudaFree(d_fp32_B));
+    //cudaErrCheck(cudaFree(d_fp16_A));
+    //cudaErrCheck(cudaFree(d_fp16_B));
+#elif WMMA_INT4
     free(h_int_A);
     free(h_int_B);
     free(c_host_int_wmma);
-    cudaErrCheck(cudaFree(d_int_A));
-    cudaErrCheck(cudaFree(d_int_B));
-    cudaErrCheck(cudaFree(c_int_wmma));
-#else
+    //cudaErrCheck(cudaFree(d_int_A));
+    //cudaErrCheck(cudaFree(d_int_B));
+    //cudaErrCheck(cudaFree(c_int_wmma));
+#elif CUBLAS_HALF
     free(h_fp32_A);
     free(h_fp32_B);
-    cudaErrCheck(cudaFree(d_fp32_A));
-#endif
-#ifdef WMMA_HALF
-    free(h_fp32_mask2);
-    cudaErrCheck(cudaFree(d_fp32_mask2));
-    cudaErrCheck(cudaFree(d_fp16_mask2));
-    cudaErrCheck(cudaFree(d_fp32_B));
-    cudaErrCheck(cudaFree(d_fp16_A));
-    cudaErrCheck(cudaFree(d_fp16_B));
-#elif CUBLAS_HALF
     free(h_fp32_BT);
-    cudaErrCheck(cudaFree(d_fp16_A));
-    cudaErrCheck(cudaFree(d_fp16_BT));
-#endif 
+    //cudaErrCheck(cudaFree(d_fp32_A));
+    //cudaErrCheck(cudaFree(d_fp32_BT));
+    //cudaErrCheck(cudaFree(d_fp16_A));
+    //cudaErrCheck(cudaFree(d_fp16_BT));
+#elif CUBLAS
+    free(h_fp32_A);
+    free(h_fp32_B);
+    free(h_fp32_BT);
+    //cudaErrCheck(cudaFree(d_fp32_A));
+    //cudaErrCheck(cudaFree(d_fp32_BT));
+#endif
+
     clock_gettime(CLOCK_REALTIME, &tcu_end);
     double tcu_fill = (fill_end.tv_sec -  fill_start.tv_sec)* BILLION + fill_end.tv_nsec - fill_start.tv_nsec;
     double tcu_convert = (convert_end.tv_sec -  convert_start.tv_sec)* BILLION + convert_end.tv_nsec - convert_start.tv_nsec;
     double tcu_elapse = (tcu_end.tv_sec -  tcu_start.tv_sec)* BILLION + tcu_end.tv_nsec - tcu_start.tv_nsec;
     double init_elapse = (init_end.tv_sec -  init_start.tv_sec)* BILLION + init_end.tv_nsec - init_start.tv_nsec;
     double cuMemcpy_elapse = (cuMemcpy_end.tv_sec -  cuMemcpy_start.tv_sec)* BILLION + cuMemcpy_end.tv_nsec - cuMemcpy_start.tv_nsec;
-#ifdef CUBLAS_HALF
+#if defined(CUBLAS_HALF) || defined(CUBLAS)
     double count_elapse = (count_end.tv_sec -  count_start.tv_sec)* BILLION + count_end.tv_nsec - count_start.tv_nsec;
     double debug_elapse = (debug_end.tv_sec -  debug_start.tv_sec)* BILLION + debug_end.tv_nsec - debug_start.tv_nsec;
 #endif
@@ -946,6 +978,10 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
     double cb_elapse = (cb_end.tv_sec -  cb_start.tv_sec)* BILLION + cb_end.tv_nsec - cb_start.tv_nsec;
     printf("cb (cudaMemcpy c_host_cublas): %lf(ms)\n", cb_elapse/(1000*1000));
 #endif
+#endif
+#ifdef CUBLAS
+    printf("cublasSGEMM sum counting: %lf(ms)\n", count_elapse/(1000*1000));
+    printf("debug (cublasCreate): %lf(ms)\n", debug_elapse/(1000*1000));
 #endif
 #ifdef WMMA_HALF
     printf("Result verification: %lf(ms)\n", tmp_elapse/(1000*1000));

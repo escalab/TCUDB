@@ -624,7 +624,6 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
     int beta = 0;
 #elif CUBLAS_HALF
     short *h_short_A, *h_short_B, *h_short_BT; // host float32 array
-    short *d_short_A, *d_short_BT; // host float32 array
     half *d_fp16_A, *d_fp16_BT;
     float *c_cublas;
     float *c_host_cublas;
@@ -707,7 +706,6 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
     CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&d_int_B, MATRIX_K * MATRIX_N * sizeof(signed char)));
     CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&c_int_wmma, MATRIX_M * MATRIX_N * sizeof(int)));
 #elif CUBLAS_HALF
-    CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&d_fp16_A, MATRIX_M * MATRIX_K * sizeof(half)));
     h_short_A = (short*)calloc(MATRIX_M*MATRIX_N, sizeof(short));
     h_short_B = (short*)calloc(MATRIX_M*MATRIX_N, sizeof(short));
     h_short_BT = (short*)calloc(MATRIX_N*MATRIX_M, sizeof(short));
@@ -717,8 +715,7 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
 //    h_red2 = (float*)calloc(MATRIX_M*MATRIX_N, sizeof(float));
     //CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&c_cublas, MATRIX_M * MATRIX_N * sizeof(half)));
     CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&c_cublas, MATRIX_M * MATRIX_N * sizeof(float)));
-    CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&d_short_A, MATRIX_M * MATRIX_K * sizeof(short)));
-    CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&d_short_BT, MATRIX_N * MATRIX_K * sizeof(short)));
+    CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&d_fp16_A, MATRIX_M * MATRIX_K * sizeof(half)));
     CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&d_fp16_BT, MATRIX_K * MATRIX_N * sizeof(half)));
 //    CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&d_vec, MATRIX_M * sizeof(float)));
 //    CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&d_red, MATRIX_M * MATRIX_N * sizeof(float)));
@@ -817,12 +814,10 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
     convertFp32ToFp16<<< (MATRIX_N * MATRIX_K + 255) / 256, 256 >>> (d_fp16_mask2, d_fp32_mask2, MATRIX_M * MATRIX_N);
     cudaErrCheck(cudaFree(d_fp32_mask2));
 #elif CUBLAS_HALF
-    CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(d_short_A, h_short_A, sizeof(short) * MATRIX_M * MATRIX_K, cudaMemcpyHostToDevice));
-    convertShortToFp16<<< (MATRIX_M * MATRIX_K + 255) / 256, 256 >>> (d_fp16_A, d_short_A, MATRIX_M * MATRIX_K);
-    cudaErrCheck(cudaFree(d_short_A));
-    CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(d_short_BT, h_short_BT, sizeof(short) * MATRIX_N * MATRIX_K, cudaMemcpyHostToDevice));
-    convertShortToFp16<<< (MATRIX_K * MATRIX_N + 255) / 256, 256 >>> (d_fp16_BT, d_short_BT, MATRIX_N * MATRIX_K);
-    cudaErrCheck(cudaFree(d_short_BT));
+    CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(d_fp16_A, h_short_A, sizeof(half) * MATRIX_M * MATRIX_K, cudaMemcpyHostToDevice));
+    convertShortToFp16<<< (MATRIX_M * MATRIX_K + 255) / 256, 256 >>> (d_fp16_A, (short*)d_fp16_A, MATRIX_M * MATRIX_K);
+    CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(d_fp16_BT, h_short_BT, sizeof(half) * MATRIX_N * MATRIX_K, cudaMemcpyHostToDevice));
+    convertShortToFp16<<< (MATRIX_K * MATRIX_N + 255) / 256, 256 >>> (d_fp16_BT, (short*)d_fp16_BT, MATRIX_N * MATRIX_K);
 #else // CUBLAS
     CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(d_fp32_A, h_fp32_A, sizeof(float) * MATRIX_M * MATRIX_K, cudaMemcpyHostToDevice));
     CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(d_fp32_BT, h_fp32_BT, sizeof(float) * MATRIX_K * MATRIX_N, cudaMemcpyHostToDevice));

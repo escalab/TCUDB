@@ -72,10 +72,12 @@ __host__ void static print_vector(float *vec, int n) {
         printf("%.1f ", vec[i]);
 }
 
-__host__ void static verify_result(float * matrix, int height, int width) {
+//__host__ void static verify_result(float * matrix, int height, int width) {
+__host__ void static verify_result(short * matrix, int height, int width) {
     int i;
     for (i = 0; i < height*width; i++) {
-        printf("%.0f\t", matrix[i]);
+        //printf("%.0f\t", matrix[i]);
+        printf("%hu\t", matrix[i]);
         if ((i+1) % width == 0)
             printf("\n\n");  
     }
@@ -597,10 +599,18 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
     int rightTupleNum = jNode->rightTable->tupleNum;
 
     // parse user input dimension from command line
-    int MATRIX_M, MATRIX_N, MATRIX_K;
-    MATRIX_M = nearestMultipleN(leftTupleNum, 16);
-    MATRIX_N = nearestMultipleN(rightTupleNum, 16);
-    MATRIX_K = *matrix_dim; // user input, matrix width
+    //int MATRIX_M, MATRIX_N, MATRIX_K;
+    uint64_t MATRIX_M, MATRIX_N, MATRIX_K; // use uint64_t to avoid overflow
+#if defined(WMMA_HALF) || defined(WMMA_INT4)
+    // WMMA requires the dimension to be multiple of 16
+    MATRIX_M = (uint64_t)nearestMultipleN(leftTupleNum, 16);
+    MATRIX_N = (uint64_t)nearestMultipleN(rightTupleNum, 16);
+#else
+    MATRIX_M = leftTupleNum;
+    MATRIX_N = rightTupleNum;
+#endif
+    MATRIX_K = *matrix_dim; // user input, matrix width (if WMMA, multiple of 16)
+
 #ifdef DEBUG
     printf("left  tuple #: %d\n", leftTupleNum);
     printf("right tuple #: %d\n", rightTupleNum);
@@ -628,7 +638,7 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
     int alpha = 1;
     int beta = 0;
 #elif CUBLAS_HALF
-    short *h_short_A, *h_short_B, *h_short_BT; // host float32 array
+    short *h_short_A, *h_short_B, *h_short_BT;
     half *d_fp16_A, *d_fp16_BT;
     float *c_cublas;
     float *c_host_cublas;
@@ -712,13 +722,14 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
     CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&d_int_B, MATRIX_K * MATRIX_N * sizeof(signed char)));
     CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&c_int_wmma, MATRIX_M * MATRIX_N * sizeof(int)));
 #elif CUBLAS_HALF
-    h_short_A = (short*)calloc(MATRIX_M*MATRIX_N, sizeof(short));
-    h_short_B = (short*)calloc(MATRIX_M*MATRIX_N, sizeof(short));
-    h_short_BT = (short*)calloc(MATRIX_N*MATRIX_M, sizeof(short));
+    h_short_A = (short*)calloc(MATRIX_M*MATRIX_K, sizeof(short));
+    h_short_B = (short*)calloc(MATRIX_N*MATRIX_K, sizeof(short));
+    h_short_BT = (short*)calloc(MATRIX_K*MATRIX_N, sizeof(short));
     c_host_cublas = (float*)calloc(MATRIX_M*MATRIX_N, sizeof(float));
-    CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&c_cublas, MATRIX_M * MATRIX_N * sizeof(float)));
-    CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&d_fp16_A, MATRIX_M * MATRIX_K * sizeof(half)));
-    CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&d_fp16_BT, MATRIX_K * MATRIX_N * sizeof(half)));
+    CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&c_cublas, (uint64_t)MATRIX_M * (uint64_t)MATRIX_N * sizeof(float)));
+    CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&d_fp16_A, (uint64_t)MATRIX_M * (uint64_t)MATRIX_K * sizeof(half)));
+    CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&d_fp16_BT, (uint64_t)MATRIX_K * (uint64_t)MATRIX_N * sizeof(half)));
+    // SGEMV
 //    h_vec = (float*)calloc(MATRIX_M, sizeof(float));
 //    CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&d_vec, MATRIX_M * sizeof(float)));
 //    CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&d_temp, MATRIX_N * sizeof(float)));
@@ -788,20 +799,6 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
     setVector(h_red2, MATRIX_M);
     CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(d_red, h_red, sizeof(float) * MATRIX_N, cudaMemcpyHostToDevice));
     CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(d_red2, h_red2, sizeof(float) * MATRIX_M, cudaMemcpyHostToDevice));
-#endif
-#endif
-
-#ifdef DEBUG
-#ifdef WMMA_HALF
-    printf("A\n");
-    verify_result(h_fp32_A, MATRIX_M, MATRIX_K);
-    printf("B\n");
-    verify_result(h_fp32_B, MATRIX_N, MATRIX_K);
-#elif CUBLAS_HALF
-    //printf("A\n");
-    //verify_result(h_fp32_A, MATRIX_M, MATRIX_K);
-    //printf("B.T\n");
-    //verify_result(h_fp32_BT, MATRIX_N, MATRIX_K);
 #endif
 #endif
 
@@ -907,7 +904,6 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
                 &beta,
                 c_cublas, CUDA_R_32F, MATRIX_N,
                 CUDA_R_32F, CUBLAS_GEMM_DFALT_TENSOR_OP)); // tcu
-                //CUDA_R_16F, CUBLAS_GEMM_DFALT_TENSOR_OP)); // tcu
     
     //cudaErrCheck(cudaEventRecord(stopcublasEX));
     cudaErrCheck(cudaFree(d_fp16_A));
@@ -1030,10 +1026,6 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
 
     cudaErrCheck(cudaEventSynchronize(stopcublasEX));
     cudaErrCheck(cudaEventElapsedTime(&cublasEXTime, startcublasEX, stopcublasEX));
-#ifdef DEBUG
-    //printf("c_host_cublas:\n");
-    //verify_result(c_host_cublas, MATRIX_M, MATRIX_N);
-#endif
 
 #ifdef RED
     float *ans;
@@ -1046,15 +1038,34 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
     cudaErrCheck(cudaFree(red_sum));
     cudaErrCheck(cudaFree(red_sum2));
 #else
+    uint64_t input_len = MATRIX_M*MATRIX_N;
+    int asum_len = 200000000; // Sasum addition per section
     clock_gettime(CLOCK_REALTIME, &count_start);
+
     cublasStatus_t ret;
     ret = cublasCreate(&cublasHandle);
-    float *cb_res = (float*)malloc(sizeof(float));
-    ret = cublasSasum(cublasHandle, MATRIX_M*MATRIX_N, c_cublas, 1, cb_res);
-    //ret = cublasSasum(cublasHandle, MATRIX_M*MATRIX_M, red_sum2, 1, cb_res); // SGEMM
-    //ret = cublasSasum(cublasHandle, MATRIX_N, d_temp, 1, cb_res); // SGEMV
-    clock_gettime(CLOCK_REALTIME, &count_end);
-    printf("c_host_cublas Sasum sum: %.0f\n", *cb_res);
+    if (input_len < asum_len) {
+        float *cb_res = (float*)malloc(sizeof(float));
+        ret = cublasSasum(cublasHandle, MATRIX_M*MATRIX_N, c_cublas, 1, cb_res);
+        clock_gettime(CLOCK_REALTIME, &count_end);
+        printf("c_host_cublas sum: %.0f\n", *cb_res);
+    } else { // support on machine has sufficient device memory ~15GB
+        int num_sec = (int)(ceil(input_len/(float)asum_len));
+        int remain = input_len % asum_len;
+        float cb_res = 0;
+        uint64_t pos = 0;
+        uint64_t sum_res = 0;
+        int i;
+        for (i = 0; i < num_sec-1; i++) {
+            ret = cublasSasum(cublasHandle, asum_len, c_cublas+pos, 1, &cb_res);
+            pos += asum_len;
+            sum_res += (uint64_t)cb_res;
+        }
+        ret = cublasSasum(cublasHandle, remain, c_cublas+pos, 1, &cb_res);
+        sum_res += (uint64_t)cb_res;
+        clock_gettime(CLOCK_REALTIME, &count_end);
+        printf("c_host_cublas sum: %lu\n", sum_res);
+    }
 #endif
     printf("cublasEX tensor cores (FP16) took %fms\n", cublasEXTime);
     

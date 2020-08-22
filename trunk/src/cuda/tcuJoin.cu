@@ -238,6 +238,107 @@ __host__ void static tcu_match(struct joinNode *jNode, int width,
 }
 #endif
 
+/* correspond to beer.sql 
+ * SELECT TABLEA.BEER, TABLEA.ABV, TABLEB.STYLE
+ * FROM TABLEA, TABLEB
+ * WHERE TABLEA.ABV = TABLEB.ABV;
+ */
+// #attributes to store depends on SELECT statements
+// iterate sequence depends on SELECT sequence; however,
+// col_idx sequence is fixed, depends on schema
+__host__ void static beer_match(struct joinNode *jNode, int width,
+         short *A, short *B, int attr_type1, int attr_type2, 
+         int attr_num1, int attr_num2,
+         short *A_id, short *B_id,
+         short *A_beer, short *B_beer,
+         short *A_factory, short *B_factory,
+         short *A_style, short *B_style) {
+
+    int A_tupleNum = jNode->leftTable->tupleNum;
+    int B_tupleNum = jNode->rightTable->tupleNum;
+    //printf("attr_num1: %d\n", attr_num1);
+    //printf("attr_num2: %d\n", attr_num2);
+    int m, n;
+    for (m = 0; m < attr_num1; m++) {
+        int A_col_idx = jNode->leftTable->attrIndex[m];
+        int k = 0;
+
+        for (n = 0; n < A_tupleNum*attr_type1; n+=attr_type1) {
+            int *temp;
+            temp = (int*)(&jNode->leftTable->content[m][n]);
+
+            if (A_col_idx == 0) { // id
+                A_id[k] = (short)*temp;
+                //printf("A col_idx[0]: %d\n", *temp);
+            } else if (A_col_idx == 1) { // beer name
+                A_beer[k] = (short)*temp;
+                //printf("A col_idx[1]: %d\n", *temp);
+            } else if (A_col_idx == 2) { // factory
+                A_factory[k] = (short)*temp;
+                //printf("A col_idx[2]: %d\n", *temp);
+            } else if (A_col_idx == 3){ // style
+                A_style[k] = (short)*temp;
+                //printf("A col_idx[3]: %d\n", *temp);
+            } else { // ABV
+                //A_style[k] = (short)*temp;
+                //printf("A col_idx[4]: %d\n", *temp);
+            }
+            k++;
+        }
+    }
+
+    for (m = 0; m < attr_num2; m++) {
+        int B_col_idx = jNode->rightTable->attrIndex[m];
+        int k = 0;
+
+        for (n = 0; n < B_tupleNum*attr_type2; n+=attr_type2) {
+            int *temp;
+            temp = (int*)(&jNode->rightTable->content[m][n]);
+
+            if (B_col_idx == 0) { // id
+                B_id[k] = (short)*temp;
+                //printf("B col_idx[0]: %d\n", *temp);
+            } else if (B_col_idx == 1) { // beer name
+                B_beer[k] = (short)*temp;
+                //printf("B col_idx[1]: %d\n", *temp);
+            } else if (B_col_idx == 2) { // factory
+                B_factory[k] = (short)*temp;
+                //printf("B col_idx[2]: %d\n", *temp);
+            } else if (B_col_idx == 3){ // style 
+                B_style[k] = (short)*temp;
+                //printf("B col_idx[3]: %d\n", *temp);
+            } else { // ABV
+                //B_style[k] = (short)*temp;
+                //printf("B col_idx[4]: %d\n", *temp);
+            }
+            k++;
+        }
+    }
+    // create first matrix
+    int i, colContIdx; // index of column content
+    colContIdx = 0;
+    for (i = 0; i < A_tupleNum; i++) {
+        int *colCont;   // content of column
+        colCont = (int*)(&jNode->leftTable->content[jNode->leftKeyIndex][colContIdx]);
+        colContIdx += attr_type1; // 4 because of INT type
+        A[i*width+(*colCont)] = (short)1; // mark as 1 if appear in the matrix
+    }
+
+    // create second matrix
+    colContIdx = 0;
+    for (i = 0; i < B_tupleNum; i++) {
+        int *colCont;
+        colCont = (int*)(&jNode->rightTable->content[jNode->rightKeyIndex][colContIdx]);
+        colContIdx += attr_type1;
+        B[i*width+(*colCont)] = (short)1;
+    }
+
+    // transpose second matrix
+    //transpose(B, B_T, B_tupleNum, width);
+
+    // perform MM & return count on device
+}
+
 /* Map the table entires into matrix for tensor core to use 
  * Assum both matrix have the same dimension and the value in INT type for now, e.g., both 16x16 dim
  * To support multiple types, this function need to be modified
@@ -606,17 +707,17 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
     MATRIX_M = (uint64_t)nearestMultipleN(leftTupleNum, 16);
     MATRIX_N = (uint64_t)nearestMultipleN(rightTupleNum, 16);
 #else
-    MATRIX_M = leftTupleNum;
-    MATRIX_N = rightTupleNum;
+    MATRIX_M = (uint64_t)leftTupleNum;
+    MATRIX_N = (uint64_t)rightTupleNum;
 #endif
     MATRIX_K = *matrix_dim; // user input, matrix width (if WMMA, multiple of 16)
 
 #ifdef DEBUG
     printf("left  tuple #: %d\n", leftTupleNum);
     printf("right tuple #: %d\n", rightTupleNum);
-    printf("MATRIX_M: %d\n", MATRIX_M);
-    printf("MATRIX_N: %d\n", MATRIX_N);
-    printf("MATRIX_K: %d\n", MATRIX_K);
+    printf("MATRIX_M: %lu\n", MATRIX_M);
+    printf("MATRIX_N: %lu\n", MATRIX_N);
+    printf("MATRIX_K: %lu\n", MATRIX_K);
 #endif
 
 #if defined(CUBLAS_HALF) || defined(CUBLAS)
@@ -664,6 +765,12 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
     clock_gettime(CLOCK_REALTIME, &debug_end);
     // enable tensor core
     cublasErrCheck(cublasSetMathMode(cublasHandle, CUBLAS_TENSOR_OP_MATH));
+
+    /* Beer dataset */
+    short *h_id_A, *h_id_B;
+    short *h_beer_A, *h_beer_B;
+    short *h_factory_A, *h_factory_B;
+    short *h_style_A, *h_style_B;
 #elif WMMA_HALF
     float *h_fp32_A, *h_fp32_B; // host float32 array
     float *d_fp32_A, *d_fp32_B; // device float32 array
@@ -733,6 +840,16 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
 //    h_vec = (float*)calloc(MATRIX_M, sizeof(float));
 //    CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&d_vec, MATRIX_M * sizeof(float)));
 //    CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&d_temp, MATRIX_N * sizeof(float)));
+    /* Beer dataset */
+    h_id_A = (short*)calloc(MATRIX_M, sizeof(short));
+    h_beer_A = (short*)calloc(MATRIX_M, sizeof(short));
+    h_factory_A = (short*)calloc(MATRIX_M, sizeof(short));
+    h_style_A = (short*)calloc(MATRIX_M, sizeof(short));
+    h_id_B = (short*)calloc(MATRIX_N, sizeof(short));
+    h_beer_B = (short*)calloc(MATRIX_N, sizeof(short));
+    h_factory_B = (short*)calloc(MATRIX_N, sizeof(short));
+    h_style_B = (short*)calloc(MATRIX_N, sizeof(short));
+
 #ifdef RED
     h_red = (float*)calloc(MATRIX_N, sizeof(float));
     h_red2 = (float*)calloc(MATRIX_M, sizeof(float));
@@ -776,7 +893,15 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
 #ifdef WMMA_INT4
     tcu_match(jNode, MATRIX_K, h_int_A, h_int_B, jNode->leftTable->attrType[0], jNode->rightTable->attrType[0]);
 #elif CUBLAS_HALF
-    tcu_match(jNode, MATRIX_K, h_short_A, h_short_B, jNode->leftTable->attrType[0], jNode->rightTable->attrType[0]);
+    beer_match(jNode, MATRIX_K,
+         h_short_A, h_short_B, 
+         jNode->leftTable->attrType[0], jNode->rightTable->attrType[0], 
+         jNode->leftTable->totalAttr, jNode->rightTable->totalAttr,
+         h_id_A, h_id_B,
+         h_beer_A, h_beer_B,
+         h_factory_A, h_factory_B,
+         h_style_A, h_style_B);
+//    tcu_match(jNode, MATRIX_K, h_short_A, h_short_B, jNode->leftTable->attrType[0], jNode->rightTable->attrType[0]);
 #else  //WMMA_HALF or CUBLAS    
     tcu_match(jNode, MATRIX_K, h_fp32_A, h_fp32_B, jNode->leftTable->attrType[0], jNode->rightTable->attrType[0]);
 #endif
@@ -986,13 +1111,7 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
     clock_gettime(CLOCK_REALTIME, &tmp_end);
 
 #elif CUBLAS_HALF
-#ifdef DEBUG
-    struct timespec cb_start, cb_end;
-    clock_gettime(CLOCK_REALTIME, &cb_start);
-    cudaErrCheck(cudaMemcpy(c_host_cublas, red_sum, MATRIX_M * sizeof(float), cudaMemcpyDeviceToHost));
-    //cudaErrCheck(cudaMemcpy(c_host_cublas, c_cublas, MATRIX_M * MATRIX_N * sizeof(float), cudaMemcpyDeviceToHost));
-    clock_gettime(CLOCK_REALTIME, &cb_end);
-#endif
+
 #elif CUBLAS
 #ifdef DEBUG
     cudaErrCheck(cudaMemcpy(c_host_sgemm, c_sgemm, MATRIX_M * MATRIX_N * sizeof(float), cudaMemcpyDeviceToHost));
@@ -1160,10 +1279,6 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
 #ifdef CUBLAS_HALF
     printf("cublasEX sum counting: %lf(ms)\n", count_elapse/(1000*1000));
     printf("debug (cublasCreate): %lf(ms)\n", debug_elapse/(1000*1000));
-#ifdef DEBUG
-    double cb_elapse = (cb_end.tv_sec -  cb_start.tv_sec)* BILLION + cb_end.tv_nsec - cb_start.tv_nsec;
-    printf("cb (cudaMemcpy c_host_cublas): %lf(ms)\n", cb_elapse/(1000*1000));
-#endif
 #endif
 #ifdef CUBLAS
     printf("cublasSGEMM sum counting: %lf(ms)\n", count_elapse/(1000*1000));

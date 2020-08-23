@@ -67,16 +67,92 @@ void cublasErrCheck_(cublasStatus_t stat, const char *file, int line) {
 }
 #endif
 
+__host__ void static attrProjection(float * res, int height, int width, 
+        struct joinNode *jNode, 
+        short *A_id, short *B_id,
+        short *A_beer, short *B_beer,
+        short *A_factory, short *B_factory,
+        short *A_style, short *B_style) {
+    /* jNode->leftOutputIndex[index] 
+     * index = 0 id
+     *         1 beer_name
+     *         2 factory
+     *         3 style
+     */
+    int i, m, n; // m: A tuple# | n: B tuple#
+    for (i = 0; i < height*width; i++) {
+        // project non-zero elements
+        if (res[i] != 0) {
+            m = i / width; // A_tuple#
+            n = i % width; // B_tuple#
+
+            // project left table attribute
+            for (int o = 0; o < jNode->leftOutputAttrNum; o++) {
+                // get attribute index
+                int leftAttrIndex = jNode->leftOutputIndex[o];
+                switch(leftAttrIndex) {
+                    case 0:
+                        printf("Table A ID: %hu\n", A_id[m]);
+                        break;
+                    case 1:
+                        printf("Table A Beer Name: %hu\n", A_beer[m]);
+                        break;
+                    case 2:
+                        printf("Table A Factory: %hu\n", A_factory[m]);
+                        break;
+                    case 3:
+                        printf("Table A Style: %hu\n", A_style[m]);
+                        break;
+                    default:
+                        printf("Invalid attribute index for Table A\n");
+                }
+            }
+
+            // project right table attribute
+            for (int o = 0; o < jNode->rightOutputAttrNum; o++) {
+                // get attribute index
+                int rightAttrIndex = jNode->rightOutputIndex[o];
+                switch(rightAttrIndex) {
+                    case 0:
+                        printf("Table B ID: %hu\n", B_id[n]);
+                        break;
+                    case 1:
+                        printf("Table B Beer Name: %hu\n", B_beer[n]);
+                        break;
+                    case 2:
+                        printf("Table B Factory: %hu\n", B_factory[n]);
+                        break;
+                    case 3:
+                        printf("Table B Style: %hu\n", B_style[n]);
+                        break;
+                    default:
+                        printf("Invalid attribute index for Table B\n");
+                }
+            }
+
+        }
+    }
+
+}
+
 __host__ void static print_vector(float *vec, int n) {
     for(int i = 0; i < n; i++)
         printf("%.1f ", vec[i]);
 }
 
-//__host__ void static verify_result(float * matrix, int height, int width) {
-__host__ void static verify_result(short * matrix, int height, int width) {
+__host__ void static verify_result(float * matrix, int height, int width) {
     int i;
     for (i = 0; i < height*width; i++) {
-        //printf("%.0f\t", matrix[i]);
+        printf("%.0f\t", matrix[i]);
+        if ((i+1) % width == 0)
+            printf("\n\n");  
+    }
+
+}
+
+__host__ void static verify_result_short(short * matrix, int height, int width){
+    int i;
+    for (i = 0; i < height*width; i++) {
         printf("%hu\t", matrix[i]);
         if ((i+1) % width == 0)
             printf("\n\n");  
@@ -256,6 +332,10 @@ __host__ void static beer_match(struct joinNode *jNode, int width,
 
     int A_tupleNum = jNode->leftTable->tupleNum;
     int B_tupleNum = jNode->rightTable->tupleNum;
+    //for (int o = 0; o < jNode->leftOutputAttrNum; o++)
+    //    printf("left output index: %d\n", jNode->leftOutputIndex[o]);
+    //for (int o = 0; o < jNode->rightOutputAttrNum; o++)
+    //    printf("right output index: %d\n", jNode->rightOutputIndex[o]);
     //printf("attr_num1: %d\n", attr_num1);
     //printf("attr_num2: %d\n", attr_num2);
     int m, n;
@@ -1145,6 +1225,15 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
 
     cudaErrCheck(cudaEventSynchronize(stopcublasEX));
     cudaErrCheck(cudaEventElapsedTime(&cublasEXTime, startcublasEX, stopcublasEX));
+    // retrieve other attributes from c_host_cublas given indices
+    cudaErrCheck(cudaMemcpy(c_host_cublas, c_cublas, MATRIX_M * MATRIX_N * sizeof(float), cudaMemcpyDeviceToHost));
+    verify_result(c_host_cublas, MATRIX_M, MATRIX_N);
+    attrProjection(c_host_cublas, MATRIX_M, MATRIX_N,
+            jNode,
+            h_id_A, h_id_B,
+            h_beer_A, h_beer_B,
+            h_factory_A, h_factory_B,
+            h_style_A, h_style_B);
 
 #ifdef RED
     float *ans;

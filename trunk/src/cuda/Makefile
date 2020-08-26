@@ -35,7 +35,7 @@ cpu: driver.cu
 
 gpu: tableScan.cu hashJoin.cu tcuJoin.cu cuckoo.cu inviJoin.cu materialize.cu groupby.cu orderBy.cu
 #	$(NVCC) -c -g $(GENCODE_FLAGS) -DWMMA_HALF tableScan.cu hashJoin.cu tcuJoin.cu cuckoo.cu inviJoin.cu materialize.cu groupby.cu orderBy.cu 
-	$(NVCC) -c -g $(GENCODE_FLAGS) -DCUBLAS_HALF tableScan.cu hashJoin.cu tcuJoin.cu cuckoo.cu inviJoin.cu materialize.cu groupby.cu orderBy.cu 
+	$(NVCC) -c -g $(GENCODE_FLAGS) -DCUBLAS_HALF -DITUNES tableScan.cu hashJoin.cu tcuJoin.cu cuckoo.cu inviJoin.cu materialize.cu groupby.cu orderBy.cu 
 #	$(NVCC) -c -g $(GENCODE_FLAGS) -DCUBLAS tableScan.cu hashJoin.cu tcuJoin.cu cuckoo.cu inviJoin.cu materialize.cu groupby.cu orderBy.cu 
 
 all: gpudb

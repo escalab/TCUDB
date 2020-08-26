@@ -73,7 +73,8 @@ __host__ void static attrProjection(float * res, int height, int width,
         short *A_id, short *B_id,
         short *A_beer, short *B_beer,
         short *A_factory, short *B_factory,
-        short *A_style, short *B_style) {
+        short *A_style, short *B_style,
+        short *A_abv, short *B_abv) {
     /* jNode->leftOutputIndex[index] 
      * index = 0 id
      *         1 beer_name
@@ -90,7 +91,7 @@ __host__ void static attrProjection(float * res, int height, int width,
             // project left table attribute
             for (int o = 0; o < jNode->leftOutputAttrNum; o++) {
                 // get attribute index
-                int leftAttrIndex = jNode->leftOutputIndex[o];
+                int leftAttrIndex = jNode->leftTable->attrIndex[o];
                 switch(leftAttrIndex) {
                     case 0:
                         printf("Table A ID: %hu\n", A_id[m]);
@@ -104,6 +105,9 @@ __host__ void static attrProjection(float * res, int height, int width,
                     case 3:
                         printf("Table A Style: %hu\n", A_style[m]);
                         break;
+                    case 4:
+                        printf("Table A ABV: %hu\n", A_abv[m]);
+                        break;
                     default:
                         printf("Invalid attribute index for Table A\n");
                 }
@@ -112,7 +116,7 @@ __host__ void static attrProjection(float * res, int height, int width,
             // project right table attribute
             for (int o = 0; o < jNode->rightOutputAttrNum; o++) {
                 // get attribute index
-                int rightAttrIndex = jNode->rightOutputIndex[o];
+                int rightAttrIndex = jNode->rightTable->attrIndex[o];
                 switch(rightAttrIndex) {
                     case 0:
                         printf("Table B ID: %hu\n", B_id[n]);
@@ -126,6 +130,9 @@ __host__ void static attrProjection(float * res, int height, int width,
                     case 3:
                         printf("Table B Style: %hu\n", B_style[n]);
                         break;
+                    case 4:
+                        printf("Table B ABV: %hu\n", B_abv[n]);
+                        break;
                     default:
                         printf("Invalid attribute index for Table B\n");
                 }
@@ -134,9 +141,111 @@ __host__ void static attrProjection(float * res, int height, int width,
         }
         printf("\n");
     }
+    //TODO: create materialized view -- combined projected column into a temp table
+    // e.g. beer2.sql -> 7x6 table, 7 rows(join count), 6 columns(projection)
+    //TODO: further matching 
 
 }
-#else
+#elif ITUNES
+__host__ void static attrProjection(float * res, int height, int width, 
+        struct joinNode *jNode, 
+        short *A_id, short *B_id,
+        short *A_song, short *B_song,
+        short *A_artist, short *B_artist,
+        short *A_album, short *B_album,
+        short *A_genre, short *B_genre,
+        short *A_price, short *B_price,
+        short *A_copyright, short *B_copyright,
+        short *A_time, short *B_time,
+        short *A_released, short *B_released) {
+
+    int i, m, n; // m: A tuple# | n: B tuple#
+    for (i = 0; i < height*width; i++) {
+        // project non-zero elements
+        if (res[i] != 0) {
+            m = i / width; // A_tuple#
+            n = i % width; // B_tuple#
+
+            // project left table attribute
+            for (int o = 0; o < jNode->leftOutputAttrNum; o++) {
+                // get attribute index
+                int leftAttrIndex = jNode->leftTable->attrIndex[o];
+                switch(leftAttrIndex) {
+                    case 0:
+                        printf("Table A ID: %hu\n", A_id[m]);
+                        break;
+                    case 1:
+                        printf("Table A Song Name: %hu\n", A_song[m]);
+                        break;
+                    case 2:
+                        printf("Table A Artist: %hu\n", A_artist[m]);
+                        break;
+                    case 3:
+                        printf("Table A Album: %hu\n", A_album[m]);
+                        break;
+                    case 4:
+                        printf("Table A Genre: %hu\n", A_genre[m]);
+                        break;
+                    case 5:
+                        printf("Table A Price: %hu\n", A_price[m]);
+                        break;
+                    case 6:
+                        printf("Table A CopyRight: %hu\n", A_copyright[m]);
+                        break;
+                    case 7:
+                        printf("Table A Time: %hu\n", A_time[m]);
+                        break;
+                    case 8:
+                        printf("Table A Released: %hu\n", A_released[m]);
+                        break;
+                    default:
+                        printf("Invalid attribute index for Table A\n");
+                }
+            }
+
+            // project right table attribute
+            for (int o = 0; o < jNode->rightOutputAttrNum; o++) {
+                // get attribute index
+                int rightAttrIndex = jNode->rightTable->attrIndex[o];
+                //printf("rightOutputIndex: %d\n", rightAttrIndex);
+                switch(rightAttrIndex) {
+                    case 0:
+                        printf("Table B ID: %hu\n", B_id[m]);
+                        break;
+                    case 1:
+                        printf("Table B Song Name: %hu\n", B_song[m]);
+                        break;
+                    case 2:
+                        printf("Table B Artist: %hu\n", B_artist[m]);
+                        break;
+                    case 3:
+                        printf("Table B Album: %hu\n", B_album[m]);
+                        break;
+                    case 4:
+                        printf("Table B Genre: %hu\n", B_genre[m]);
+                        break;
+                    case 5:
+                        printf("Table B Price: %hu\n", B_price[m]);
+                        break;
+                    case 6:
+                        printf("Table B CopyRight: %hu\n", B_copyright[m]);
+                        break;
+                    case 7:
+                        printf("Table B Time: %hu\n", B_time[m]);
+                        break;
+                    case 8:
+                        printf("Table B Released: %hu\n", B_released[m]);
+                        break;
+                    default:
+                        printf("Invalid attribute index for Table B\n");
+                }
+            }
+
+        }
+        printf("\n");
+    }
+}
+
 #endif
 
 __host__ void static print_vector(float *vec, int n) {
@@ -327,6 +436,7 @@ __host__ void static itunes_match(struct joinNode *jNode, int width,
          short *A_artist, short *B_artist,
          short *A_album, short *B_album,
          short *A_genre, short *B_genre,
+         short *A_price, short *B_price,
          short *A_copyright, short *B_copyright,
          short *A_time, short *B_time,
          short *A_released, short *B_released) {
@@ -334,8 +444,8 @@ __host__ void static itunes_match(struct joinNode *jNode, int width,
     int A_tupleNum = jNode->leftTable->tupleNum;
     int B_tupleNum = jNode->rightTable->tupleNum;
 
-    printf("attr_num1: %d\n", attr_num1);
-    printf("attr_num2: %d\n", attr_num2);
+    //printf("attr_num1: %d\n", attr_num1);
+    //printf("attr_num2: %d\n", attr_num2);
 
     int m, n;
     for (m = 0; m < attr_num1; m++) {
@@ -346,33 +456,38 @@ __host__ void static itunes_match(struct joinNode *jNode, int width,
             int *temp;
             temp = (int*)(&jNode->leftTable->content[m][n]);
 
-            if (A_col_idx == 0) { // id
-                A_id[k] = (short)*temp;
-                printf("A col_idx[0]: %d\n", *temp);
-            } else if (A_col_idx == 1) { // song
-                A_song[k] = (short)*temp;
-                printf("A col_idx[1]: %d\n", *temp);
-            } else if (A_col_idx == 2) { // artist
-                A_artist[k] = (short)*temp;
-                printf("A col_idx[2]: %d\n", *temp);
-            } else if (A_col_idx == 3){ // album
-                A_album[k] = (short)*temp;
-                printf("A col_idx[3]: %d\n", *temp);
-            } else if (A_col_idx == 4){ // genre
-                A_genre[k] = (short)*temp;
-                printf("A col_idx[4]: %d\n", *temp);
-            } else if (A_col_idx == 5){ // price
-                printf("A col_idx[5]: %d\n", *temp);
-            } else if (A_col_idx == 6){ // copyright
-                A_copyright[k] = (short)*temp;
-                printf("A col_idx[6]: %d\n", *temp);
-            } else if (A_col_idx == 7){ // time
-                A_time[k] = (short)*temp;
-                printf("A col_idx[7]: %d\n", *temp);
-            } else { // released
-                A_released[k] = (short)*temp;
-                printf("A col_idx[8]: %d\n", *temp);
-            }
+            switch(A_col_idx) {
+                case 0:
+                    A_id[k] = (short)*temp;
+                    break;
+                case 1:
+                    A_song[k] = (short)*temp;
+                    break;
+                case 2:
+                    A_artist[k] = (short)*temp;
+                    break;
+                case 3:
+                    A_album[k] = (short)*temp;
+                    break;
+                case 4:
+                    A_genre[k] = (short)*temp;
+                    break;
+                case 5:
+                    A_price[k] = (short)*temp;
+                    break;
+                case 6:
+                    A_copyright[k] = (short)*temp;
+                    break;
+                case 7:
+                    A_time[k] = (short)*temp;
+                    break;
+                case 8:
+                    A_released[k] = (short)*temp;
+                    break;
+                default:
+                    printf("Invalid attribute index for Table A\n");
+            } 
+
             k++;
         }
     }
@@ -384,37 +499,43 @@ __host__ void static itunes_match(struct joinNode *jNode, int width,
         for (n = 0; n < B_tupleNum*attr_type2; n+=attr_type2) {
             int *temp;
             temp = (int*)(&jNode->rightTable->content[m][n]);
-
-            if (B_col_idx == 0) { // id
-                B_id[k] = (short)*temp;
-                printf("B col_idx[0]: %d\n", *temp);
-            } else if (B_col_idx == 1) { // song
-                B_song[k] = (short)*temp;
-                printf("B col_idx[1]: %d\n", *temp);
-            } else if (B_col_idx == 2) { // artist
-                B_artist[k] = (short)*temp;
-                printf("B col_idx[2]: %d\n", *temp);
-            } else if (B_col_idx == 3){ // album
-                B_album[k] = (short)*temp;
-                printf("B col_idx[3]: %d\n", *temp);
-            } else if (B_col_idx == 4){ // genre
-                B_genre[k] = (short)*temp;
-                printf("B col_idx[4]: %d\n", *temp);
-            } else if (B_col_idx == 5){ // price
-                printf("B col_idx[5]: %d\n", *temp);
-            } else if (B_col_idx == 6){ // copyright
-                B_copyright[k] = (short)*temp;
-                printf("B col_idx[6]: %d\n", *temp);
-            } else if (B_col_idx == 7){ // time
-                B_time[k] = (short)*temp;
-                printf("B col_idx[7]: %d\n", *temp);
-            } else { // released
-                B_released[k] = (short)*temp;
-                printf("B col_idx[8]: %d\n", *temp);
+            
+            switch(B_col_idx) {
+                case 0:
+                    B_id[k] = (short)*temp;
+                    break;
+                case 1:
+                    B_song[k] = (short)*temp;
+                    break;
+                case 2:
+                    B_artist[k] = (short)*temp;
+                    break;
+                case 3:
+                    B_album[k] = (short)*temp;
+                    break;
+                case 4:
+                    B_genre[k] = (short)*temp;
+                    break;
+                case 5:
+                    B_price[k] = (short)*temp;
+                    break;
+                case 6:
+                    B_copyright[k] = (short)*temp;
+                    break;
+                case 7:
+                    B_time[k] = (short)*temp;
+                    break;
+                case 8:
+                    B_released[k] = (short)*temp;
+                    break;
+                default:
+                    printf("Invalid attribute index for Table B\n");
             }
+
             k++;
         }
     }
+
     // create first matrix
     int i, colContIdx; // index of column content
     colContIdx = 0;
@@ -433,11 +554,6 @@ __host__ void static itunes_match(struct joinNode *jNode, int width,
         colContIdx += attr_type1;
         B[i*width+(*colCont)] = (short)1;
     }
-
-    // transpose second matrix
-    //transpose(B, B_T, B_tupleNum, width);
-
-    // perform MM & return count on device
 }
 
 /* correspond to beer.sql 
@@ -454,7 +570,8 @@ __host__ void static beer_match(struct joinNode *jNode, int width,
          short *A_id, short *B_id,
          short *A_beer, short *B_beer,
          short *A_factory, short *B_factory,
-         short *A_style, short *B_style) {
+         short *A_style, short *B_style,
+         short *A_abv, short *B_abv) {
 
     int A_tupleNum = jNode->leftTable->tupleNum;
     int B_tupleNum = jNode->rightTable->tupleNum;
@@ -473,22 +590,31 @@ __host__ void static beer_match(struct joinNode *jNode, int width,
             int *temp;
             temp = (int*)(&jNode->leftTable->content[m][n]);
 
-            if (A_col_idx == 0) { // id
-                A_id[k] = (short)*temp;
-                //printf("A col_idx[0]: %d\n", *temp);
-            } else if (A_col_idx == 1) { // beer name
-                A_beer[k] = (short)*temp;
-                //printf("A col_idx[1]: %d\n", *temp);
-            } else if (A_col_idx == 2) { // factory
-                A_factory[k] = (short)*temp;
-                //printf("A col_idx[2]: %d\n", *temp);
-            } else if (A_col_idx == 3){ // style
-                A_style[k] = (short)*temp;
-                //printf("A col_idx[3]: %d\n", *temp);
-            } else { // ABV
-                //A_style[k] = (short)*temp;
-                //printf("A col_idx[4]: %d\n", *temp);
+            switch(A_col_idx) { 
+                case 0:
+                    A_id[k] = (short)*temp;
+                    //printf("A col_idx[0]: %d\n", *temp);
+                    break;
+                case 1:
+                    A_beer[k] = (short)*temp;
+                    //printf("A col_idx[1]: %d\n", *temp);
+                    break;
+                case 2:
+                    A_factory[k] = (short)*temp;
+                    //printf("A col_idx[2]: %d\n", *temp);
+                    break;
+                case 3:
+                    A_style[k] = (short)*temp;
+                    //printf("A col_idx[3]: %d\n", *temp);
+                    break;
+                case 4:
+                    A_abv[k] = (short)*temp;
+                    //printf("A col_idx[4]: %d\n", *temp);
+                    break;
+                default:
+                    printf("Invalid attribute index for Table A\n");
             }
+
             k++;
         }
     }
@@ -501,22 +627,31 @@ __host__ void static beer_match(struct joinNode *jNode, int width,
             int *temp;
             temp = (int*)(&jNode->rightTable->content[m][n]);
 
-            if (B_col_idx == 0) { // id
-                B_id[k] = (short)*temp;
-                //printf("B col_idx[0]: %d\n", *temp);
-            } else if (B_col_idx == 1) { // beer name
-                B_beer[k] = (short)*temp;
-                //printf("B col_idx[1]: %d\n", *temp);
-            } else if (B_col_idx == 2) { // factory
-                B_factory[k] = (short)*temp;
-                //printf("B col_idx[2]: %d\n", *temp);
-            } else if (B_col_idx == 3){ // style 
-                B_style[k] = (short)*temp;
-                //printf("B col_idx[3]: %d\n", *temp);
-            } else { // ABV
-                //B_style[k] = (short)*temp;
-                //printf("B col_idx[4]: %d\n", *temp);
+            switch(B_col_idx) { 
+                case 0:
+                    B_id[k] = (short)*temp;
+                    //printf("B col_idx[0]: %d\n", *temp);
+                    break;
+                case 1:
+                    B_beer[k] = (short)*temp;
+                    //printf("B col_idx[1]: %d\n", *temp);
+                    break;
+                case 2:
+                    B_factory[k] = (short)*temp;
+                    //printf("B col_idx[2]: %d\n", *temp);
+                    break;
+                case 3:
+                    B_style[k] = (short)*temp;
+                    //printf("B col_idx[3]: %d\n", *temp);
+                    break;
+                case 4:
+                    B_abv[k] = (short)*temp;
+                    //printf("B col_idx[4]: %d\n", *temp);
+                    break;
+                default:
+                    printf("Invalid attribute index for Table B\n");
             }
+
             k++;
         }
     }
@@ -538,11 +673,6 @@ __host__ void static beer_match(struct joinNode *jNode, int width,
         colContIdx += attr_type1;
         B[i*width+(*colCont)] = (short)1;
     }
-
-    // transpose second matrix
-    //transpose(B, B_T, B_tupleNum, width);
-
-    // perform MM & return count on device
 }
 
 /* Map the table entires into matrix for tensor core to use 
@@ -978,6 +1108,7 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
     short *h_beer_A, *h_beer_B;
     short *h_factory_A, *h_factory_B;
     short *h_style_A, *h_style_B;
+    short *h_abv_A, *h_abv_B;
 #elif ITUNES
     /* iTunes dataset */
     short *h_id_A, *h_id_B;
@@ -985,6 +1116,7 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
     short *h_artist_A, *h_artist_B;
     short *h_album_A, *h_album_B;
     short *h_genre_A, *h_genre_B;
+    short *h_price_A, *h_price_B;
     short *h_copyright_A, *h_copyright_B;
     short *h_time_A, *h_time_B;
     short *h_released_A, *h_released_B;
@@ -1066,10 +1198,12 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
     h_beer_A = (short*)calloc(MATRIX_M, sizeof(short));
     h_factory_A = (short*)calloc(MATRIX_M, sizeof(short));
     h_style_A = (short*)calloc(MATRIX_M, sizeof(short));
+    h_abv_A = (short*)calloc(MATRIX_M, sizeof(short));
     h_id_B = (short*)calloc(MATRIX_N, sizeof(short));
     h_beer_B = (short*)calloc(MATRIX_N, sizeof(short));
     h_factory_B = (short*)calloc(MATRIX_N, sizeof(short));
     h_style_B = (short*)calloc(MATRIX_N, sizeof(short));
+    h_abv_B = (short*)calloc(MATRIX_N, sizeof(short));
 #elif ITUNES
     h_id_A = (short*)calloc(MATRIX_M, sizeof(short)); 
     h_id_B = (short*)calloc(MATRIX_N, sizeof(short));
@@ -1081,6 +1215,8 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
     h_album_B = (short*)calloc(MATRIX_N, sizeof(short));
     h_genre_A = (short*)calloc(MATRIX_M, sizeof(short));
     h_genre_B = (short*)calloc(MATRIX_N, sizeof(short));
+    h_price_A = (short*)calloc(MATRIX_M, sizeof(short));
+    h_price_B = (short*)calloc(MATRIX_N, sizeof(short));
     h_copyright_A = (short*)calloc(MATRIX_M, sizeof(short));
     h_copyright_B = (short*)calloc(MATRIX_N, sizeof(short));
     h_time_A = (short*)calloc(MATRIX_M, sizeof(short));
@@ -1141,7 +1277,8 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
          h_id_A, h_id_B,
          h_beer_A, h_beer_B,
          h_factory_A, h_factory_B,
-         h_style_A, h_style_B);
+         h_style_A, h_style_B,
+         h_abv_A, h_abv_B);
 #elif ITUNES
     itunes_match(jNode, MATRIX_K,
          h_short_A, h_short_B, 
@@ -1152,6 +1289,7 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
          h_artist_A, h_artist_B,
          h_album_A, h_album_B,
          h_genre_A, h_genre_B,
+         h_price_A, h_price_B,
          h_copyright_A, h_copyright_B,
          h_time_A, h_time_B,
          h_released_A, h_released_B);
@@ -1404,14 +1542,27 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
     cudaErrCheck(cudaEventElapsedTime(&cublasEXTime, startcublasEX, stopcublasEX));
     // retrieve other attributes from c_host_cublas given indices
     cudaErrCheck(cudaMemcpy(c_host_cublas, c_cublas, MATRIX_M * MATRIX_N * sizeof(float), cudaMemcpyDeviceToHost));
-    verify_result(c_host_cublas, MATRIX_M, MATRIX_N);
+    //verify_result(c_host_cublas, MATRIX_M, MATRIX_N);
 #ifdef BEER
     attrProjection(c_host_cublas, MATRIX_M, MATRIX_N,
             jNode,
             h_id_A, h_id_B,
             h_beer_A, h_beer_B,
             h_factory_A, h_factory_B,
-            h_style_A, h_style_B);
+            h_style_A, h_style_B,
+            h_abv_A, h_abv_B);
+#elif ITUNES
+    attrProjection(c_host_cublas, MATRIX_M, MATRIX_N,
+            jNode,
+            h_id_A, h_id_B,
+            h_song_A, h_song_B,
+            h_artist_A, h_artist_B,
+            h_album_A, h_album_B,
+            h_genre_A, h_genre_B,
+            h_price_A, h_price_B,
+            h_copyright_A, h_copyright_B,
+            h_time_A, h_time_B,
+            h_released_A, h_released_B);
 #endif
 
 #ifdef RED

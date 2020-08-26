@@ -67,6 +67,7 @@ void cublasErrCheck_(cublasStatus_t stat, const char *file, int line) {
 }
 #endif
 
+#ifdef BEER
 __host__ void static attrProjection(float * res, int height, int width, 
         struct joinNode *jNode, 
         short *A_id, short *B_id,
@@ -131,9 +132,12 @@ __host__ void static attrProjection(float * res, int height, int width,
             }
 
         }
+        printf("\n");
     }
 
 }
+#else
+#endif
 
 __host__ void static print_vector(float *vec, int n) {
     for(int i = 0; i < n; i++)
@@ -313,6 +317,128 @@ __host__ void static tcu_match(struct joinNode *jNode, int width,
     // perform MM & return count on device
 }
 #endif
+
+/* iTunes dataset with iTunes.sql */
+__host__ void static itunes_match(struct joinNode *jNode, int width,
+         short *A, short *B, int attr_type1, int attr_type2, 
+         int attr_num1, int attr_num2,
+         short *A_id, short *B_id,
+         short *A_song, short *B_song,
+         short *A_artist, short *B_artist,
+         short *A_album, short *B_album,
+         short *A_genre, short *B_genre,
+         short *A_copyright, short *B_copyright,
+         short *A_time, short *B_time,
+         short *A_released, short *B_released) {
+
+    int A_tupleNum = jNode->leftTable->tupleNum;
+    int B_tupleNum = jNode->rightTable->tupleNum;
+
+    printf("attr_num1: %d\n", attr_num1);
+    printf("attr_num2: %d\n", attr_num2);
+
+    int m, n;
+    for (m = 0; m < attr_num1; m++) {
+        int A_col_idx = jNode->leftTable->attrIndex[m];
+        int k = 0;
+
+        for (n = 0; n < A_tupleNum*attr_type1; n+=attr_type1) {
+            int *temp;
+            temp = (int*)(&jNode->leftTable->content[m][n]);
+
+            if (A_col_idx == 0) { // id
+                A_id[k] = (short)*temp;
+                printf("A col_idx[0]: %d\n", *temp);
+            } else if (A_col_idx == 1) { // song
+                A_song[k] = (short)*temp;
+                printf("A col_idx[1]: %d\n", *temp);
+            } else if (A_col_idx == 2) { // artist
+                A_artist[k] = (short)*temp;
+                printf("A col_idx[2]: %d\n", *temp);
+            } else if (A_col_idx == 3){ // album
+                A_album[k] = (short)*temp;
+                printf("A col_idx[3]: %d\n", *temp);
+            } else if (A_col_idx == 4){ // genre
+                A_genre[k] = (short)*temp;
+                printf("A col_idx[4]: %d\n", *temp);
+            } else if (A_col_idx == 5){ // price
+                printf("A col_idx[5]: %d\n", *temp);
+            } else if (A_col_idx == 6){ // copyright
+                A_copyright[k] = (short)*temp;
+                printf("A col_idx[6]: %d\n", *temp);
+            } else if (A_col_idx == 7){ // time
+                A_time[k] = (short)*temp;
+                printf("A col_idx[7]: %d\n", *temp);
+            } else { // released
+                A_released[k] = (short)*temp;
+                printf("A col_idx[8]: %d\n", *temp);
+            }
+            k++;
+        }
+    }
+
+    for (m = 0; m < attr_num2; m++) {
+        int B_col_idx = jNode->rightTable->attrIndex[m];
+        int k = 0;
+
+        for (n = 0; n < B_tupleNum*attr_type2; n+=attr_type2) {
+            int *temp;
+            temp = (int*)(&jNode->rightTable->content[m][n]);
+
+            if (B_col_idx == 0) { // id
+                B_id[k] = (short)*temp;
+                printf("B col_idx[0]: %d\n", *temp);
+            } else if (B_col_idx == 1) { // song
+                B_song[k] = (short)*temp;
+                printf("B col_idx[1]: %d\n", *temp);
+            } else if (B_col_idx == 2) { // artist
+                B_artist[k] = (short)*temp;
+                printf("B col_idx[2]: %d\n", *temp);
+            } else if (B_col_idx == 3){ // album
+                B_album[k] = (short)*temp;
+                printf("B col_idx[3]: %d\n", *temp);
+            } else if (B_col_idx == 4){ // genre
+                B_genre[k] = (short)*temp;
+                printf("B col_idx[4]: %d\n", *temp);
+            } else if (B_col_idx == 5){ // price
+                printf("B col_idx[5]: %d\n", *temp);
+            } else if (B_col_idx == 6){ // copyright
+                B_copyright[k] = (short)*temp;
+                printf("B col_idx[6]: %d\n", *temp);
+            } else if (B_col_idx == 7){ // time
+                B_time[k] = (short)*temp;
+                printf("B col_idx[7]: %d\n", *temp);
+            } else { // released
+                B_released[k] = (short)*temp;
+                printf("B col_idx[8]: %d\n", *temp);
+            }
+            k++;
+        }
+    }
+    // create first matrix
+    int i, colContIdx; // index of column content
+    colContIdx = 0;
+    for (i = 0; i < A_tupleNum; i++) {
+        int *colCont;   // content of column
+        colCont = (int*)(&jNode->leftTable->content[jNode->leftKeyIndex][colContIdx]);
+        colContIdx += attr_type1; // 4 because of INT type
+        A[i*width+(*colCont)] = (short)1; // mark as 1 if appear in the matrix
+    }
+
+    // create second matrix
+    colContIdx = 0;
+    for (i = 0; i < B_tupleNum; i++) {
+        int *colCont;
+        colCont = (int*)(&jNode->rightTable->content[jNode->rightKeyIndex][colContIdx]);
+        colContIdx += attr_type1;
+        B[i*width+(*colCont)] = (short)1;
+    }
+
+    // transpose second matrix
+    //transpose(B, B_T, B_tupleNum, width);
+
+    // perform MM & return count on device
+}
 
 /* correspond to beer.sql 
  * SELECT TABLEA.BEER, TABLEA.ABV, TABLEB.STYLE
@@ -846,11 +972,24 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
     // enable tensor core
     cublasErrCheck(cublasSetMathMode(cublasHandle, CUBLAS_TENSOR_OP_MATH));
 
+#ifdef BEER
     /* Beer dataset */
     short *h_id_A, *h_id_B;
     short *h_beer_A, *h_beer_B;
     short *h_factory_A, *h_factory_B;
     short *h_style_A, *h_style_B;
+#elif ITUNES
+    /* iTunes dataset */
+    short *h_id_A, *h_id_B;
+    short *h_song_A, *h_song_B;
+    short *h_artist_A, *h_artist_B;
+    short *h_album_A, *h_album_B;
+    short *h_genre_A, *h_genre_B;
+    short *h_copyright_A, *h_copyright_B;
+    short *h_time_A, *h_time_B;
+    short *h_released_A, *h_released_B;
+#endif
+
 #elif WMMA_HALF
     float *h_fp32_A, *h_fp32_B; // host float32 array
     float *d_fp32_A, *d_fp32_B; // device float32 array
@@ -920,6 +1059,8 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
 //    h_vec = (float*)calloc(MATRIX_M, sizeof(float));
 //    CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&d_vec, MATRIX_M * sizeof(float)));
 //    CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&d_temp, MATRIX_N * sizeof(float)));
+
+#ifdef BEER
     /* Beer dataset */
     h_id_A = (short*)calloc(MATRIX_M, sizeof(short));
     h_beer_A = (short*)calloc(MATRIX_M, sizeof(short));
@@ -929,6 +1070,24 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
     h_beer_B = (short*)calloc(MATRIX_N, sizeof(short));
     h_factory_B = (short*)calloc(MATRIX_N, sizeof(short));
     h_style_B = (short*)calloc(MATRIX_N, sizeof(short));
+#elif ITUNES
+    h_id_A = (short*)calloc(MATRIX_M, sizeof(short)); 
+    h_id_B = (short*)calloc(MATRIX_N, sizeof(short));
+    h_song_A = (short*)calloc(MATRIX_M, sizeof(short));
+    h_song_B = (short*)calloc(MATRIX_N, sizeof(short));
+    h_artist_A = (short*)calloc(MATRIX_M, sizeof(short));
+    h_artist_B = (short*)calloc(MATRIX_N, sizeof(short));
+    h_album_A = (short*)calloc(MATRIX_M, sizeof(short));
+    h_album_B = (short*)calloc(MATRIX_N, sizeof(short));
+    h_genre_A = (short*)calloc(MATRIX_M, sizeof(short));
+    h_genre_B = (short*)calloc(MATRIX_N, sizeof(short));
+    h_copyright_A = (short*)calloc(MATRIX_M, sizeof(short));
+    h_copyright_B = (short*)calloc(MATRIX_N, sizeof(short));
+    h_time_A = (short*)calloc(MATRIX_M, sizeof(short));
+    h_time_B = (short*)calloc(MATRIX_N, sizeof(short));
+    h_released_A = (short*)calloc(MATRIX_M, sizeof(short));
+    h_released_B = (short*)calloc(MATRIX_N, sizeof(short));
+#endif
 
 #ifdef RED
     h_red = (float*)calloc(MATRIX_N, sizeof(float));
@@ -973,6 +1132,8 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
 #ifdef WMMA_INT4
     tcu_match(jNode, MATRIX_K, h_int_A, h_int_B, jNode->leftTable->attrType[0], jNode->rightTable->attrType[0]);
 #elif CUBLAS_HALF
+
+#ifdef BEER
     beer_match(jNode, MATRIX_K,
          h_short_A, h_short_B, 
          jNode->leftTable->attrType[0], jNode->rightTable->attrType[0], 
@@ -981,7 +1142,23 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
          h_beer_A, h_beer_B,
          h_factory_A, h_factory_B,
          h_style_A, h_style_B);
-//    tcu_match(jNode, MATRIX_K, h_short_A, h_short_B, jNode->leftTable->attrType[0], jNode->rightTable->attrType[0]);
+#elif ITUNES
+    itunes_match(jNode, MATRIX_K,
+         h_short_A, h_short_B, 
+         jNode->leftTable->attrType[0], jNode->rightTable->attrType[0], 
+         jNode->leftTable->totalAttr, jNode->rightTable->totalAttr,
+         h_id_A, h_id_B,
+         h_song_A, h_song_B,
+         h_artist_A, h_artist_B,
+         h_album_A, h_album_B,
+         h_genre_A, h_genre_B,
+         h_copyright_A, h_copyright_B,
+         h_time_A, h_time_B,
+         h_released_A, h_released_B);
+#else // matrix-multiplication join count
+    tcu_match(jNode, MATRIX_K, h_short_A, h_short_B, jNode->leftTable->attrType[0], jNode->rightTable->attrType[0]);
+#endif
+
 #else  //WMMA_HALF or CUBLAS    
     tcu_match(jNode, MATRIX_K, h_fp32_A, h_fp32_B, jNode->leftTable->attrType[0], jNode->rightTable->attrType[0]);
 #endif
@@ -1228,12 +1405,14 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
     // retrieve other attributes from c_host_cublas given indices
     cudaErrCheck(cudaMemcpy(c_host_cublas, c_cublas, MATRIX_M * MATRIX_N * sizeof(float), cudaMemcpyDeviceToHost));
     verify_result(c_host_cublas, MATRIX_M, MATRIX_N);
+#ifdef BEER
     attrProjection(c_host_cublas, MATRIX_M, MATRIX_N,
             jNode,
             h_id_A, h_id_B,
             h_beer_A, h_beer_B,
             h_factory_A, h_factory_B,
             h_style_A, h_style_B);
+#endif
 
 #ifdef RED
     float *ans;

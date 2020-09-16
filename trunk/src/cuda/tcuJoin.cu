@@ -49,6 +49,7 @@ using namespace nvcuda;
 const int WMMA_M = 16;
 const int WMMA_N = 16;
 const int WMMA_K = 16;
+#define MAX_THREADS 1024 // For NVIDIA Turing Architecture
 
 // Define some error checking macros.
 #define cudaErrCheck(stat) { cudaErrCheck_((stat), __FILE__, __LINE__); }
@@ -256,9 +257,31 @@ __host__ void static attrProjection(float * res, int height, int width,
 
 #endif
 
+/* Fill matrix on device memory */
+// TODO: if attrType == 1, ptr cast to char type
+__global__ void static gpu_fill(char *column, int matWidth, half *mat, size_t tupleNum, int attrType) {
+    int i = blockDim.x * blockIdx.x + threadIdx.x;
+
+    if (i > tupleNum) return;
+
+    int index = i * attrType;
+    int value = (int)column[index];
+    mat[i*matWidth + value] = __int2half_rd(1);
+}
+
 __host__ void static print_vector(float *vec, int n) {
     for(int i = 0; i < n; i++)
         printf("%.1f ", vec[i]);
+}
+
+__host__ void static verify_test(half *matrix, int height, int width) {
+    int i;
+    for (i = 0; i < height*width; i++) {
+        printf("%.0f\t", __half2float(matrix[i]));
+        if ((i+1) % width == 0)
+            printf("\n\n");  
+    }
+
 }
 
 __host__ void static verify_result(float * matrix, int height, int width) {
@@ -292,7 +315,8 @@ __host__ void static verify_result_int(int * matrix, int height, int width) {
 }
 
 #ifdef CUBLAS_HALF
-__global__ void gpu_transpose(half *odata, const short *idata, int row, int col) {
+__global__ void gpu_transpose(half *odata, const half *idata, int row, int col) {
+//__global__ void gpu_transpose(half *odata, const short *idata, int row, int col) {
 //__global__ void gpu_transpose(short *odata, const short *idata, int row, int col) {
     int index = blockDim.x * blockIdx.x + threadIdx.x;
     int x = index % col;
@@ -300,7 +324,8 @@ __global__ void gpu_transpose(half *odata, const short *idata, int row, int col)
     //int x = blockDim.x * blockIdx.x + threadIdx.x;
     //int y = blockDim.y * blockIdx.y + threadIdx.y;
     if (x < col && y < row) {
-        odata[x*row + y] = __short2half_rd(idata[y*col + x]);
+        odata[x*row + y] = idata[y*col + x];
+        //odata[x*row + y] = __short2half_rd(idata[y*col + x]);
         //odata[x*row + y] = idata[y*col + x];
     }
 }
@@ -462,6 +487,7 @@ __host__ void static tcu_match(struct joinNode *jNode, int width,
 
 #ifdef ITUNES
 /* iTunes dataset with iTunes.sql */
+//TODO: if materialized view is required
 __host__ void static itunes_match(struct joinNode *jNode, int width,
          short *A, short *B, int attr_type1, int attr_type2, 
          int attr_num1, int attr_num2,
@@ -598,6 +624,7 @@ __host__ void static itunes_match(struct joinNode *jNode, int width,
 #endif
 
 #ifdef BEER
+//TODO: if materialized view is required
 /* correspond to beer.sql 
  * SELECT TABLEA.BEER, TABLEA.ABV, TABLEB.STYLE
  * FROM TABLEA, TABLEB
@@ -933,7 +960,6 @@ __global__ static void agg_cal_cons(char ** content, int colNum, struct groupByE
                 // 1. fill data into two matrices
                 //transform_data(content, exp[j].exp, i, A, B);
                 fillMathExp(content, exp[j].exp, i, A, B);
-                // TODO: how to maintain the order for threads
                 // maybe the order does not important if we can get relative ranking
 
                 // 2. copy data into device using cudaMemcpy (if directly assign in device memory, can avoid this step)
@@ -1123,7 +1149,8 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
     int beta = 0;
 #elif CUBLAS_HALF
     short *h_short_A, *h_short_B;
-    half *d_fp16_A, *d_fp16_BT;
+    half *d_fp16_A, *d_fp16_B, *d_fp16_BT;
+    char *gpu_fact, *gpu_dim;
     short *d_short_B;
     float *c_cublas;
     float *c_host_cublas;
@@ -1230,9 +1257,15 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
 #elif CUBLAS_HALF
     h_short_A = (short*)calloc(MATRIX_M*MATRIX_K, sizeof(short));
     h_short_B = (short*)calloc(MATRIX_N*MATRIX_K, sizeof(short));
+    long foreignKeySize = jNode->leftTable->attrTotalSize[jNode->leftKeyIndex];
+    long primaryKeySize = sizeof(int) * jNode->rightTable->tupleNum;
+    CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&gpu_fact,foreignKeySize));
+    CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&gpu_dim,primaryKeySize));
     c_host_cublas = (float*)calloc(MATRIX_M*MATRIX_N, sizeof(float));
     CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&c_cublas, (uint64_t)MATRIX_M * (uint64_t)MATRIX_N * sizeof(float)));
     CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&d_fp16_A, (uint64_t)MATRIX_M * (uint64_t)MATRIX_K * sizeof(half)));
+    CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&d_fp16_B, (uint64_t)MATRIX_N * (uint64_t)MATRIX_K * sizeof(half)));
+    CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&d_short_B, (uint64_t)MATRIX_N * (uint64_t)MATRIX_K * sizeof(short)));
     CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&d_short_B, (uint64_t)MATRIX_N * (uint64_t)MATRIX_K * sizeof(short)));
     CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&d_fp16_BT, (uint64_t)MATRIX_K * (uint64_t)MATRIX_N * sizeof(half)));
     // SGEMV
@@ -1345,7 +1378,39 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
          );
     //clock_gettime(CLOCK_REALTIME, &itunesFill_end);
 #else // matrix-multiplication join count
-    tcu_match(jNode, MATRIX_K, h_short_A, h_short_B, jNode->leftTable->attrType[0], jNode->rightTable->attrType[0]);
+    //tcu_match(jNode, MATRIX_K, h_short_A, h_short_B, jNode->leftTable->attrType[0], jNode->rightTable->attrType[0]);
+    int A_tupleNum = jNode->leftTable->tupleNum;
+    int B_tupleNum = jNode->rightTable->tupleNum;
+    printf("MATRIX_K: %d\n", MATRIX_K);
+    printf("A tuple#: %d\n", A_tupleNum);
+    printf("foreignKeySize: %ld\n", foreignKeySize);
+    printf("B tuple#: %d\n", B_tupleNum);
+    printf("primaryKeySize: %ld\n", primaryKeySize);
+    // cudaMemcpyHostToDevice raw data->char *column
+    CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(gpu_fact,jNode->leftTable->content[jNode->leftKeyIndex], foreignKeySize,cudaMemcpyHostToDevice));
+    CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(gpu_dim,jNode->rightTable->content[jNode->rightKeyIndex], primaryKeySize,cudaMemcpyHostToDevice));
+    //TODO: test result by copy D->H
+    gpu_fill<<<(MAX_THREADS + A_tupleNum -1)/MAX_THREADS, MAX_THREADS>>> (gpu_fact,
+            MATRIX_K,
+            d_fp16_A,
+            A_tupleNum,
+            jNode->leftTable->attrType[0]);
+    gpu_fill<<<(MAX_THREADS + B_tupleNum -1)/MAX_THREADS, MAX_THREADS>>> (gpu_dim,
+            MATRIX_K,
+            d_fp16_B,
+            B_tupleNum,
+            jNode->rightTable->attrType[0]);
+    half *testA, *testB, *testBT;
+    testA = (half*)calloc(MATRIX_M*MATRIX_K, sizeof(half));
+    testB = (half*)calloc(MATRIX_N*MATRIX_K, sizeof(half));
+    testBT = (half*)calloc(MATRIX_K*MATRIX_N, sizeof(half));
+    //CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(testA, d_fp16_A, MATRIX_M * MATRIX_K * sizeof(half),cudaMemcpyDeviceToHost));
+    //CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(testB, d_fp16_B, MATRIX_N * MATRIX_K * sizeof(half),cudaMemcpyDeviceToHost));
+    printf("testA:\n");
+    //verify_test(testA, MATRIX_M, MATRIX_K);
+    printf("testB:\n");
+    //verify_test(testB, MATRIX_N, MATRIX_K);
+
 #endif
 
 #else  //WMMA_HALF or CUBLAS    
@@ -1387,9 +1452,10 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
     convertFp32ToFp16<<< (MATRIX_N * MATRIX_K + 255) / 256, 256 >>> (d_fp16_mask2, d_fp32_mask2, MATRIX_M * MATRIX_N);
     cudaErrCheck(cudaFree(d_fp32_mask2));
 #elif CUBLAS_HALF
-    CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(d_fp16_A, h_short_A, sizeof(half) * MATRIX_M * MATRIX_K, cudaMemcpyHostToDevice));
-    convertShortToFp16<<< (MATRIX_M * MATRIX_K + 255) / 256, 256 >>> (d_fp16_A, (short*)d_fp16_A, MATRIX_M * MATRIX_K);
-    CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(d_short_B, h_short_B, sizeof(short) * MATRIX_N * MATRIX_K, cudaMemcpyHostToDevice));
+    //directly fill in half format on gpu
+//    CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(d_fp16_A, h_short_A, sizeof(half) * MATRIX_M * MATRIX_K, cudaMemcpyHostToDevice));
+//    convertShortToFp16<<< (MATRIX_M * MATRIX_K + 255) / 256, 256 >>> (d_fp16_A, (short*)d_fp16_A, MATRIX_M * MATRIX_K);
+//    CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(d_short_B, h_short_B, sizeof(short) * MATRIX_N * MATRIX_K, cudaMemcpyHostToDevice));
     /*
     dim3 gridDim;
     dim3 blockDim;
@@ -1401,9 +1467,14 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
     */
     clock_gettime(CLOCK_REALTIME, &transpose_start);
     //gpu_transpose<<< (MATRIX_N * MATRIX_K + 255) / 256, 256 >>> (d_short_BT, d_short_B, MATRIX_N, MATRIX_K);
-    gpu_transpose<<< (MATRIX_N * MATRIX_K + 255) / 256, 256 >>> (d_fp16_BT, d_short_B, MATRIX_N, MATRIX_K);
+    gpu_transpose<<< (MATRIX_N * MATRIX_K + 255) / 256, 256 >>> (d_fp16_BT, d_fp16_B, MATRIX_N, MATRIX_K);
+    //CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(testBT, d_fp16_BT, MATRIX_N * MATRIX_K * sizeof(half),cudaMemcpyDeviceToHost));
+    printf("testBT:\n");
+    //verify_test(testBT, MATRIX_K, MATRIX_N);
+
+    //gpu_transpose<<< (MATRIX_N * MATRIX_K + 255) / 256, 256 >>> (d_fp16_BT, d_short_B, MATRIX_N, MATRIX_K);
     clock_gettime(CLOCK_REALTIME, &transpose_end);
-    cudaErrCheck(cudaFree(d_short_B));
+//    cudaErrCheck(cudaFree(d_short_B));
 
     //CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(d_fp16_BT, h_short_BT, sizeof(half) * MATRIX_N * MATRIX_K, cudaMemcpyHostToDevice));
     //convertShortToFp16<<< (MATRIX_K * MATRIX_N + 255) / 256, 256 >>> (d_fp16_BT, (short*)d_fp16_BT, MATRIX_N * MATRIX_K);

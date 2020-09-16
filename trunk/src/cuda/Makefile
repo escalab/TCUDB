@@ -13,7 +13,7 @@ endif
 
 NVCC            ?= $(CUDA_BIN_PATH)/nvcc
 
-GENCODE_SM70    := -gencode arch=compute_70,code=sm_70 -gencode arch=compute_75,code=sm_75
+GENCODE_SM70    := -gencode arch=compute_75,code=sm_75
 GENCODE_FLAGS   := $(GENCODE_SM70) -O3
 
 INCLUDES   := -I../include
@@ -25,17 +25,18 @@ else
 endif
 
 TCGemm: simpleTensorCoreGEMM.cu
-	$(NVCC) -o TCGemm -arch=sm_70 -lcublas -lcurand simpleTensorCoreGEMM.cu
+	$(NVCC) -o TCGemm -arch=sm_75 -lcublas -lcurand simpleTensorCoreGEMM.cu
 
 gpudb: gpu cpu
-	 $(NVCC) -pg -O3 tableScan.o inviJoin.o hashJoin.o tcuJoin.o cuckoo.o materialize.o groupby.o orderBy.o driver.o $(LDFLAGS) -o GPUDATABASE -lcurand -lcublas
+	 $(NVCC) -pg $(GENCODE_FLAGS) tableScan.o inviJoin.o hashJoin.o tcuJoin.o cuckoo.o materialize.o groupby.o orderBy.o driver.o $(LDFLAGS) -o GPUDATABASE -lcurand -lcublas_static -lculibos -lcudart_static -lpthread -ldl -lcublasLt_static
 
 cpu: driver.cu 
 	$(NVCC) -c -g $(GENCODE_FLAGS) driver.cu
 
 gpu: tableScan.cu hashJoin.cu tcuJoin.cu cuckoo.cu inviJoin.cu materialize.cu groupby.cu orderBy.cu
 #	$(NVCC) -c -g $(GENCODE_FLAGS) -DWMMA_HALF tableScan.cu hashJoin.cu tcuJoin.cu cuckoo.cu inviJoin.cu materialize.cu groupby.cu orderBy.cu 
-	$(NVCC) -c -g $(GENCODE_FLAGS) -DCUBLAS_HALF -DITUNES tableScan.cu hashJoin.cu tcuJoin.cu cuckoo.cu inviJoin.cu materialize.cu groupby.cu orderBy.cu 
+#	$(NVCC) -c -g $(GENCODE_FLAGS) -DCUBLAS_HALF -DBEER tableScan.cu hashJoin.cu tcuJoin.cu cuckoo.cu inviJoin.cu materialize.cu groupby.cu orderBy.cu 
+	$(NVCC) -c -g $(GENCODE_FLAGS) -DCUBLAS_HALF tableScan.cu hashJoin.cu tcuJoin.cu cuckoo.cu inviJoin.cu materialize.cu groupby.cu orderBy.cu 
 #	$(NVCC) -c -g $(GENCODE_FLAGS) -DCUBLAS tableScan.cu hashJoin.cu tcuJoin.cu cuckoo.cu inviJoin.cu materialize.cu groupby.cu orderBy.cu 
 
 all: gpudb

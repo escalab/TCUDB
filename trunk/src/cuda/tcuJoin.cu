@@ -265,8 +265,10 @@ __global__ void static gpu_fill(char *column, int matWidth, half *mat, size_t tu
     if (i > tupleNum) return;
 
     int index = i * attrType;
-    int value = (int)column[index];
-    mat[i*matWidth + value] = __int2half_rd(1);
+    //int value = (int)column[index]; // char -> int will lose 3 bytes
+    int *value = (int*)&column[index];
+    //mat[i*matWidth + (*value)] = __int2half_rd(1);
+    mat[i*matWidth + (*value)] = __float2half(1.0f);
 }
 
 __host__ void static print_vector(float *vec, int n) {
@@ -422,6 +424,7 @@ __host__ void static tcu_match(struct joinNode *jNode, int width,
     // perform MM & return count on device
 }
 #elif CUBLAS_HALF
+// host version
 __host__ void static tcu_match(struct joinNode *jNode, int width,
          short *A, short *B, int attr_type1, int attr_type2) {
 
@@ -1148,10 +1151,9 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
     int alpha = 1;
     int beta = 0;
 #elif CUBLAS_HALF
-    short *h_short_A, *h_short_B;
+    //short *h_short_A, *h_short_B;
     half *d_fp16_A, *d_fp16_B, *d_fp16_BT;
-    char *gpu_fact, *gpu_dim;
-    short *d_short_B;
+    char *gpu_fact, *gpu_dim; // raw data
     float *c_cublas;
     float *c_host_cublas;
 
@@ -1255,8 +1257,14 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
     CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&d_int_B, MATRIX_K * MATRIX_N * sizeof(signed char)));
     CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&c_int_wmma, MATRIX_M * MATRIX_N * sizeof(int)));
 #elif CUBLAS_HALF
+
+#if defined(BEER) || defined(ITUNES)
+    // if materialized view is required
+    short *h_short_A, *h_short_B;
     h_short_A = (short*)calloc(MATRIX_M*MATRIX_K, sizeof(short));
     h_short_B = (short*)calloc(MATRIX_N*MATRIX_K, sizeof(short));
+#endif
+
     long foreignKeySize = jNode->leftTable->attrTotalSize[jNode->leftKeyIndex];
     long primaryKeySize = sizeof(int) * jNode->rightTable->tupleNum;
     CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&gpu_fact,foreignKeySize));
@@ -1265,8 +1273,6 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
     CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&c_cublas, (uint64_t)MATRIX_M * (uint64_t)MATRIX_N * sizeof(float)));
     CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&d_fp16_A, (uint64_t)MATRIX_M * (uint64_t)MATRIX_K * sizeof(half)));
     CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&d_fp16_B, (uint64_t)MATRIX_N * (uint64_t)MATRIX_K * sizeof(half)));
-    CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&d_short_B, (uint64_t)MATRIX_N * (uint64_t)MATRIX_K * sizeof(short)));
-    CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&d_short_B, (uint64_t)MATRIX_N * (uint64_t)MATRIX_K * sizeof(short)));
     CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&d_fp16_BT, (uint64_t)MATRIX_K * (uint64_t)MATRIX_N * sizeof(half)));
     // SGEMV
 //    h_vec = (float*)calloc(MATRIX_M, sizeof(float));
@@ -1381,11 +1387,6 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
     //tcu_match(jNode, MATRIX_K, h_short_A, h_short_B, jNode->leftTable->attrType[0], jNode->rightTable->attrType[0]);
     int A_tupleNum = jNode->leftTable->tupleNum;
     int B_tupleNum = jNode->rightTable->tupleNum;
-    printf("MATRIX_K: %d\n", MATRIX_K);
-    printf("A tuple#: %d\n", A_tupleNum);
-    printf("foreignKeySize: %ld\n", foreignKeySize);
-    printf("B tuple#: %d\n", B_tupleNum);
-    printf("primaryKeySize: %ld\n", primaryKeySize);
     // cudaMemcpyHostToDevice raw data->char *column
     CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(gpu_fact,jNode->leftTable->content[jNode->leftKeyIndex], foreignKeySize,cudaMemcpyHostToDevice));
     CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(gpu_dim,jNode->rightTable->content[jNode->rightKeyIndex], primaryKeySize,cudaMemcpyHostToDevice));
@@ -1400,16 +1401,6 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
             d_fp16_B,
             B_tupleNum,
             jNode->rightTable->attrType[0]);
-    half *testA, *testB, *testBT;
-    testA = (half*)calloc(MATRIX_M*MATRIX_K, sizeof(half));
-    testB = (half*)calloc(MATRIX_N*MATRIX_K, sizeof(half));
-    testBT = (half*)calloc(MATRIX_K*MATRIX_N, sizeof(half));
-    //CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(testA, d_fp16_A, MATRIX_M * MATRIX_K * sizeof(half),cudaMemcpyDeviceToHost));
-    //CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(testB, d_fp16_B, MATRIX_N * MATRIX_K * sizeof(half),cudaMemcpyDeviceToHost));
-    printf("testA:\n");
-    //verify_test(testA, MATRIX_M, MATRIX_K);
-    printf("testB:\n");
-    //verify_test(testB, MATRIX_N, MATRIX_K);
 
 #endif
 
@@ -1468,9 +1459,6 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
     clock_gettime(CLOCK_REALTIME, &transpose_start);
     //gpu_transpose<<< (MATRIX_N * MATRIX_K + 255) / 256, 256 >>> (d_short_BT, d_short_B, MATRIX_N, MATRIX_K);
     gpu_transpose<<< (MATRIX_N * MATRIX_K + 255) / 256, 256 >>> (d_fp16_BT, d_fp16_B, MATRIX_N, MATRIX_K);
-    //CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(testBT, d_fp16_BT, MATRIX_N * MATRIX_K * sizeof(half),cudaMemcpyDeviceToHost));
-    printf("testBT:\n");
-    //verify_test(testBT, MATRIX_K, MATRIX_N);
 
     //gpu_transpose<<< (MATRIX_N * MATRIX_K + 255) / 256, 256 >>> (d_fp16_BT, d_short_B, MATRIX_N, MATRIX_K);
     clock_gettime(CLOCK_REALTIME, &transpose_end);
@@ -1658,9 +1646,7 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
     cudaErrCheck(cudaEventSynchronize(stopcublasEX));
     cudaErrCheck(cudaEventElapsedTime(&cublasEXTime, startcublasEX, stopcublasEX));
     // retrieve other attributes from c_host_cublas given indices
-    //cudaErrCheck(cudaMemcpy(c_host_cublas, c_cublas, MATRIX_M * MATRIX_N * sizeof(float), cudaMemcpyDeviceToHost));
-    //printf("MATRIX_M: %d\tMATRIX_N: %d\n", MATRIX_M, MATRIX_N);
-    //verify_result(c_host_cublas, MATRIX_M, MATRIX_N);
+
 #ifdef BEER
     /*
     attrProjection(c_host_cublas, MATRIX_M, MATRIX_N,
@@ -1773,8 +1759,12 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
     free(h_int_B);
     free(c_host_int_wmma);
 #elif CUBLAS_HALF
+
+#if defined(BEER) || defined(ITUNES)
     free(h_short_A);
     free(h_short_B);
+#endif
+
 #elif CUBLAS
     free(h_fp32_A);
     free(h_fp32_B);

@@ -257,6 +257,15 @@ __host__ void static attrProjection(float * res, int height, int width,
 
 #endif
 
+__global__ static void gb_count(float *red_sum, int length, int *cnt) {
+    int i = blockDim.x * blockIdx.x + threadIdx.x;
+
+    if (i > length) return;
+    if (red_sum[i] != 0)
+        atomicAdd(cnt, 1);
+
+}
+
 /* Fill matrix on device memory */
 // TODO: if attrType == 1, ptr cast to char type
 __global__ void static gpu_fill(char *column, int matWidth, half *mat, size_t tupleNum, int attrType) {
@@ -1112,7 +1121,14 @@ __global__ void wmma_int(signed char *a, signed char *b, int *c, int M, int N, i
  * Output:
  *  A new table node
  */
-struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *matrix_dim){
+struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *matrix_dim, struct groupByNode *gb){
+    /*
+    if (gb) {
+        printf("groupByIndex[0]: %d\n", gb->groupByIndex[0]);
+        printf("jNode leftKeyIndex: %d\n", jNode->leftKeyIndex);
+        printf("jNode rightKeyIndex: %d\n", jNode->rightKeyIndex);
+    }*/
+    
 #ifdef DEBUG
     cudaPrintfInit();
 #endif
@@ -1169,6 +1185,7 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
 
     //float *h_vec, *d_vec, *d_temp; // SGEMV
 #if defined(RED)|| defined(REDHALF)
+    struct timespec gbCount_start, gbCount_end;
     float *h_red, *d_red;
     float *h_red2, *d_red2;
     /*
@@ -1551,8 +1568,11 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
 
 #if defined(RED)||defined(REDHALF)
     float *red_sum, *red_sum2;
+    int *gbCount;
     CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void **)&red_sum, MATRIX_M * sizeof(float)));
     CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void **)&red_sum2, 1 * sizeof(float)));
+    CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void **)&gbCount, sizeof(int)));
+    CUDA_SAFE_CALL_NO_SYNC(cudaMemset(gbCount, 0, sizeof(int)));
     /*
 #elif REDHALF
     half *red_sum, *red_sum2;
@@ -1608,6 +1628,12 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
                 red_sum, CUDA_R_32F, 1,
                 CUDA_R_32F, CUBLAS_GEMM_DFALT_TENSOR_OP)); // tcu
 
+    if (gb) {
+        //struct timespec gbCount_start, gbCount_end;
+        clock_gettime(CLOCK_REALTIME, &gbCount_start);
+        gb_count<<<(MATRIX_M + 255) / 256, 256>>> (red_sum, MATRIX_M, gbCount);
+        clock_gettime(CLOCK_REALTIME, &gbCount_end);
+    }
     // 2nd reduction
     cublasErrCheck(cublasGemmEx(cublasHandle, CUBLAS_OP_N, CUBLAS_OP_N,
                 1, 1, MATRIX_M,
@@ -1769,6 +1795,13 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
     clock_gettime(CLOCK_REALTIME, &count_start);
 #if defined(RED) || defined(REDHALF)
     cudaErrCheck(cudaMemcpy(ans, red_sum2, 1 * sizeof(float), cudaMemcpyDeviceToHost));
+    if (gb) {
+        int h_gbCount = 0;
+        cudaErrCheck(cudaMemcpy(&h_gbCount, gbCount, sizeof(int), cudaMemcpyDeviceToHost));
+        printf("groupBy count: %d\n", h_gbCount);
+        double gbCount_elapse = (gbCount_end.tv_sec -  gbCount_start.tv_sec)* BILLION + gbCount_end.tv_nsec - gbCount_start.tv_nsec;
+        printf("GroupBy Time: %lf(ms)\n", gbCount_elapse/(1000*1000));
+    }
 //#elif REDHALF
 //    cudaErrCheck(cudaMemcpy(ans, red_sum2_fp32, 1 * sizeof(float), cudaMemcpyDeviceToHost));
 #endif

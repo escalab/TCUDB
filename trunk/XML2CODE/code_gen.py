@@ -832,7 +832,7 @@ def generate_code(tree):
             print >>fo, "extern struct tableNode* orderBy(struct orderByNode *, struct statistic *);"
             print >>fo, "extern char* materializeCol(struct materializeNode * mn, struct statistic *);"
         else: # joinType == 2
-            print >>fo, "extern struct tableNode* tcuJoin(struct joinNode *, struct statistic *, int *);"
+            print >>fo, "extern struct tableNode* tcuJoin(struct joinNode *, struct statistic *, int *, struct groupByNode *);"
             #print >>fo, "extern struct tableNode* groupBy(struct groupByNode *,struct statistic *);"
 
     else:              
@@ -2364,10 +2364,48 @@ def generate_code(tree):
             print >>fo, "\t\t" + jName + ".rightKeyIndex = " + str(joinAttr.dimIndex[i]) + ";"
             print >>fo, "\t\t" + jName + ".leftKeyIndex = " + str(joinAttr.factIndex[i]) + ";"
 
+            # try to pass gbNode info to tcuJoin
+            if joinType == 2:
+                if len(aggNode) > 0:
+                    gb_exp_list = aggNode[0].group_by_clause.groupby_exp_list
+                    select_list = aggNode[0].select_list.tmp_exp_list
+                    selectLen = len(select_list)
+                    gbLen = len(gb_exp_list)
+                    print >>fo, "\tstruct groupByNode * gbNode = (struct groupByNode *) malloc(sizeof(struct groupByNode));"
+                    print >>fo, "\tCHECK_POINTER(gbNode);"
+                    #print >>fo, "\tgbNode->table = " +resultNode +";"
+                    print >>fo, "\tgbNode->groupByColNum = " + str(gbLen) + ";"
+                    print >>fo, "\tgbNode->groupByIndex = (int *)malloc(sizeof(int) * " + str(gbLen) + ");"
+                    print >>fo, "\tCHECK_POINTER(gbNode->groupByIndex);"
+                    #print >>fo, "\tgbNode->groupByType = (int *)malloc(sizeof(int) * " + str(gbLen) + ");"
+                    #print >>fo, "\tCHECK_POINTER(gbNode->groupByType);"
+                    #print >>fo, "\tgbNode->groupBySize = (int *)malloc(sizeof(int) * " + str(gbLen) + ");"
+                    #print >>fo, "\tCHECK_POINTER(gbNode->groupBySize);"
+            
+                    for i in range(0,gbLen):
+                        exp = gb_exp_list[i]
+                        if isinstance(exp, ystree.YRawColExp):
+                            print >>fo, "\tgbNode->groupByIndex[" + str(i) + "] = " + str(exp.column_name) + ";"
+                            #print >>fo, "\tgbNode->groupByType[" + str(i) + "] = gbNode->table->attrType[" + str(exp.column_name) + "];" 
+                            #print >>fo, "\tgbNode->groupBySize[" + str(i) + "] = gbNode->table->attrSize[" + str(exp.column_name) + "];" 
+                        elif isinstance(exp, ystree.YConsExp):
+                            print >>fo, "\tgbNode->groupByIndex[" + str(i) + "] = -1;" 
+                            print >>fo, "\tgbNode->groupByType[" + str(i) + "] = INT;" 
+                            print >>fo, "\tgbNode->groupBySize[" + str(i) + "] = sizeof(int);" 
+                        else:
+                            print 1/0
+
+
             if CODETYPE == 0:
-                print >>fo, "\t\tstruct tableNode *join" + str(i) + " = tcuJoin(&" + jName + ",&pp, matrix_dim_ptr);\n"
+                if len(aggNode) > 0:
+                    print >>fo, "\t\tstruct tableNode *join" + str(i) + " = tcuJoin(&" + jName + ",&pp, matrix_dim_ptr, gbNode);\n"
+                else:
+                    print >>fo, "\t\tstruct tableNode *join" + str(i) + " = tcuJoin(&" + jName + ",&pp, matrix_dim_ptr, NULL);\n"
             else:
-                print >>fo, "\t\tstruct tableNode *join" + str(i) + " = tcuJoin(&" + jName + ", &context, &pp, &*matrix_dim_ptr);\n" 
+                if len(aggNode) > 0:
+                    print >>fo, "\t\tstruct tableNode *join" + str(i) + " = tcuJoin(&" + jName + ", &context, &pp, &*matrix_dim_ptr, gbNode);\n" 
+                else:
+                    print >>fo, "\t\tstruct tableNode *join" + str(i) + " = tcuJoin(&" + jName + ", &context, &pp, &*matrix_dim_ptr, NULL);\n" 
 
             factName = "join" + str(i)
 

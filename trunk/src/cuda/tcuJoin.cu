@@ -34,10 +34,10 @@
 #include <mma.h>
 #include <cublas_v2.h>
 #include <math.h>
-#ifdef DEBUG
+//#ifdef DEBUG
 #include "../include/cuPrintf.cu"
 #include "../include/cuPrintf.cuh"
-#endif
+//#endif
 
 using namespace nvcuda;
 
@@ -256,6 +256,15 @@ __host__ void static attrProjection(float * res, int height, int width,
 }
 
 #endif
+
+__global__ static void count_op(float *red_sum, int length) {
+    int i = blockDim.x * blockIdx.x + threadIdx.x;
+
+    if (i > length) return;
+    if (red_sum[i] != 0)
+        cuPrintf("Node ID: %d\tDegree: %.0f\n", i, red_sum[i]);
+
+}
 
 __global__ static void gb_count(float *red_sum, int length, int *cnt) {
     int i = blockDim.x * blockIdx.x + threadIdx.x;
@@ -1109,6 +1118,8 @@ __global__ void wmma_int(signed char *a, signed char *b, int *c, int M, int N, i
  *  A new table node
  */
 struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *matrix_dim, struct groupByNode *gb){
+    //printf("COUNT: %d\n", COUNT);
+    //printf("func: %d\n", gb->gbExp[1].func);
     /*
     if (gb) {
         printf("groupByIndex[0]: %d\n", gb->groupByIndex[0]);
@@ -1116,9 +1127,9 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
         printf("jNode rightKeyIndex: %d\n", jNode->rightKeyIndex);
     }*/
     
-#ifdef DEBUG
+//#ifdef DEBUG
     cudaPrintfInit();
-#endif
+//#endif
     int leftTupleNum = jNode->leftTable->tupleNum;
     int rightTupleNum = jNode->rightTable->tupleNum;
 
@@ -1586,6 +1597,8 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
                 CUDA_R_32F, CUBLAS_GEMM_DFALT_TENSOR_OP)); // tcu
 
         clock_gettime(CLOCK_REALTIME, &gbCount_start);
+        if (gb->gbExp[1].func == COUNT)
+            count_op<<<(MATRIX_M + 255) / 256, 256>>> (red_sum, MATRIX_M);
         gb_count<<<(MATRIX_M + 255) / 256, 256>>> (red_sum, MATRIX_M, gbCount);
         clock_gettime(CLOCK_REALTIME, &gbCount_end);
     } else {
@@ -1869,10 +1882,10 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
 #elif WMMA_HALF
     printf("Result verification: %lf(ms)\n", tmp_elapse/(1000*1000));
 #endif
-#ifdef DEBUG
+//#ifdef DEBUG
     cudaPrintfDisplay(stdout, true);
     cudaPrintfEnd();
-#endif
+//#endif
     return 0; // non-void function
 
 }

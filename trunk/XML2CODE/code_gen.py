@@ -2371,12 +2371,12 @@ def generate_code(tree):
                     select_list = aggNode[0].select_list.tmp_exp_list
                     selectLen = len(select_list)
                     gbLen = len(gb_exp_list)
-                    print >>fo, "\tstruct groupByNode * gbNode = (struct groupByNode *) malloc(sizeof(struct groupByNode));"
-                    print >>fo, "\tCHECK_POINTER(gbNode);"
+                    print >>fo, "\t\tstruct groupByNode * gbNode = (struct groupByNode *) malloc(sizeof(struct groupByNode));"
+                    print >>fo, "\t\tCHECK_POINTER(gbNode);"
                     #print >>fo, "\tgbNode->table = " +resultNode +";"
-                    print >>fo, "\tgbNode->groupByColNum = " + str(gbLen) + ";"
-                    print >>fo, "\tgbNode->groupByIndex = (int *)malloc(sizeof(int) * " + str(gbLen) + ");"
-                    print >>fo, "\tCHECK_POINTER(gbNode->groupByIndex);"
+                    print >>fo, "\t\tgbNode->groupByColNum = " + str(gbLen) + ";"
+                    print >>fo, "\t\tgbNode->groupByIndex = (int *)malloc(sizeof(int) * " + str(gbLen) + ");"
+                    print >>fo, "\t\tCHECK_POINTER(gbNode->groupByIndex);"
                     #print >>fo, "\tgbNode->groupByType = (int *)malloc(sizeof(int) * " + str(gbLen) + ");"
                     #print >>fo, "\tCHECK_POINTER(gbNode->groupByType);"
                     #print >>fo, "\tgbNode->groupBySize = (int *)malloc(sizeof(int) * " + str(gbLen) + ");"
@@ -2385,27 +2385,86 @@ def generate_code(tree):
                     for i in range(0,gbLen):
                         exp = gb_exp_list[i]
                         if isinstance(exp, ystree.YRawColExp):
-                            print >>fo, "\tgbNode->groupByIndex[" + str(i) + "] = " + str(exp.column_name) + ";"
+                            print >>fo, "\t\tgbNode->groupByIndex[" + str(i) + "] = " + str(exp.column_name) + ";"
                             #print >>fo, "\tgbNode->groupByType[" + str(i) + "] = gbNode->table->attrType[" + str(exp.column_name) + "];" 
                             #print >>fo, "\tgbNode->groupBySize[" + str(i) + "] = gbNode->table->attrSize[" + str(exp.column_name) + "];" 
                         elif isinstance(exp, ystree.YConsExp):
-                            print >>fo, "\tgbNode->groupByIndex[" + str(i) + "] = -1;" 
-                            print >>fo, "\tgbNode->groupByType[" + str(i) + "] = INT;" 
-                            print >>fo, "\tgbNode->groupBySize[" + str(i) + "] = sizeof(int);" 
+                            print >>fo, "\t\tgbNode->groupByIndex[" + str(i) + "] = -1;" 
+                            print >>fo, "\t\tgbNode->groupByType[" + str(i) + "] = INT;" 
+                            print >>fo, "\t\tgbNode->groupBySize[" + str(i) + "] = sizeof(int);" 
                         else:
                             print 1/0
 
+                    print >>fo, "\t\tgbNode->outputAttrNum = " + str(selectLen) + ";"
+                    print >>fo, "\t\tgbNode->attrType = (int *) malloc(sizeof(int) *" + str(selectLen) + ");"
+                    print >>fo, "\t\tCHECK_POINTER(gbNode->attrType);"
+                    print >>fo, "\t\tgbNode->attrSize = (int *) malloc(sizeof(int) *" + str(selectLen) + ");"
+                    print >>fo, "\t\tCHECK_POINTER(gbNode->attrSize);"
+                    print >>fo, "\t\tgbNode->tupleSize = 0;"
+                    print >>fo, "\t\tgbNode->gbExp = (struct groupByExp *) malloc(sizeof(struct groupByExp) * " + str(selectLen) + ");"
+                    print >>fo, "\t\tCHECK_POINTER(gbNode->gbExp);"
+            
+                    for i in range(0,selectLen):
+                        exp = select_list[i]
+                        if isinstance(exp, ystree.YFuncExp):
+            
+                            print >>fo, "\t\tgbNode->tupleSize += sizeof(float);"
+                            print >>fo, "\t\tgbNode->attrType[" + str(i) + "] = FLOAT;"
+                            print >>fo, "\t\tgbNode->attrSize[" + str(i) + "] = sizeof(float);"
+                            print >>fo, "\t\tgbNode->gbExp["+str(i)+"].func = " + exp.func_name + ";"
+                            para = exp.parameter_list[0]
+                            mathFunc = mathExp()
+                            mathFunc.addOp(para)
+                            prefix = "\t\tgbNode->gbExp[" + str(i) + "].exp"
+                            printMathFunc(fo,prefix, mathFunc)
+            
+                        elif isinstance(exp, ystree.YRawColExp):
+                            colIndex = exp.column_name
+                            #print >>fo, "\t\tgbNode->attrType[" + str(i) + "] = " + resultNode + "->attrType[" + str(colIndex) + "];"
+                            #print >>fo, "\t\tgbNode->attrSize[" + str(i) + "] = " + resultNode + "->attrSize[" + str(colIndex) + "];"
+                            #print >>fo, "\t\tgbNode->tupleSize += "+resultNode + "->attrSize[" + str(colIndex) + "];"
+                            print >>fo, "\t\tgbNode->gbExp[" + str(i) + "].func = NOOP;"
+                            print >>fo, "\t\tgbNode->gbExp[" + str(i) + "].exp.op = NOOP;"
+                            print >>fo, "\t\tgbNode->gbExp[" + str(i) + "].exp.exp = NULL;"
+                            print >>fo, "\t\tgbNode->gbExp[" + str(i) + "].exp.opNum = 1;"
+                            print >>fo, "\t\tgbNode->gbExp[" + str(i) + "].exp.opType = COLUMN;"
+                            print >>fo, "\t\tgbNode->gbExp[" + str(i) + "].exp.opValue = " + str(exp.column_name) + ";"
+            
+                        else:
+                            if exp.cons_type == "INTEGER":
+                                pass
+                                #print >>fo, "\t\tgbNode->attrType[" + str(i) + "] = INT;"
+                                #print >>fo, "\t\tgbNode->attrSize[" + str(i) + "] = sizeof(int);"
+                                #print >>fo, "\t\tgbNode->tupleSize += sizeof(int);"
+                            elif exp.cons_type == "FLOAT":
+                                pass
+                                #print >>fo, "\t\tgbNode->attrType[" + str(i) + "] = FLOAT;"
+                                #print >>fo, "\t\tgbNode->attrSize[" + str(i) + "] = sizeof(float);"
+                                #print >>fo, "\t\tgbNode->tupleSize += sizeof(float);"
+                            else:
+                                print 1/0
+            
+                            print >>fo, "\t\tgbNode->gbExp[" + str(i) + "].func = NOOP;"
+                            print >>fo, "\t\tgbNode->gbExp[" + str(i) + "].exp.op = NOOP;"
+                            print >>fo, "\t\tgbNode->gbExp[" + str(i) + "].exp.exp = NULL;"
+                            print >>fo, "\t\tgbNode->gbExp[" + str(i) + "].exp.opNum = 1;"
+                            print >>fo, "\t\tgbNode->gbExp[" + str(i) + "].exp.opType = CONS;"
+                            print >>fo, "\t\tgbNode->gbExp[" + str(i) + "].exp.opValue = " + str(exp.cons_value) + ";"
+                            # until this point
+    
+
+            # for i in range(0, gbLen or selectLen)
 
             if CODETYPE == 0:
                 if len(aggNode) > 0:
-                    print >>fo, "\t\tstruct tableNode *join" + str(i) + " = tcuJoin(&" + jName + ",&pp, matrix_dim_ptr, gbNode);\n"
+                    print >>fo, "\t\tstruct tableNode *join" + str(i-1) + " = tcuJoin(&" + jName + ",&pp, matrix_dim_ptr, gbNode);\n"
                 else:
-                    print >>fo, "\t\tstruct tableNode *join" + str(i) + " = tcuJoin(&" + jName + ",&pp, matrix_dim_ptr, NULL);\n"
+                    print >>fo, "\t\tstruct tableNode *join" + str(i-1) + " = tcuJoin(&" + jName + ",&pp, matrix_dim_ptr, NULL);\n"
             else:
                 if len(aggNode) > 0:
-                    print >>fo, "\t\tstruct tableNode *join" + str(i) + " = tcuJoin(&" + jName + ", &context, &pp, &*matrix_dim_ptr, gbNode);\n" 
+                    print >>fo, "\t\tstruct tableNode *join" + str(i-1) + " = tcuJoin(&" + jName + ", &context, &pp, &*matrix_dim_ptr, gbNode);\n" 
                 else:
-                    print >>fo, "\t\tstruct tableNode *join" + str(i) + " = tcuJoin(&" + jName + ", &context, &pp, &*matrix_dim_ptr, NULL);\n" 
+                    print >>fo, "\t\tstruct tableNode *join" + str(i-1) + " = tcuJoin(&" + jName + ", &context, &pp, &*matrix_dim_ptr, NULL);\n" 
 
             factName = "join" + str(i)
 
@@ -2413,9 +2472,9 @@ def generate_code(tree):
             print >>fo, "\t\tif(blockTotal !=1){"
 
             if CODETYPE == 0:
-                print >>fo, "\t\t\tmergeIntoTable("+resultNode+",join" + str(i) + ", &pp);"
+                print >>fo, "\t\t\tmergeIntoTable("+resultNode+",join" + str(i-1) + ", &pp);"
             else:
-                print >>fo, "\t\t\tmergeIntoTable("+resultNode+",join" + str(i) + ", &context, &pp);"
+                print >>fo, "\t\t\tmergeIntoTable("+resultNode+",join" + str(i-1) + ", &context, &pp);"
                 
 
             print >>fo, "\t\t\tclock_gettime(CLOCK_REALTIME,&diskStart);"

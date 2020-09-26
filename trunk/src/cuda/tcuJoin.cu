@@ -1130,6 +1130,14 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
 //#ifdef DEBUG
     cudaPrintfInit();
 //#endif
+    struct timespec tcu_start, tcu_end;
+    struct timespec init_start, init_end;
+    struct timespec fill_start, fill_end;
+    struct timespec maskRED_start, maskRED_end;
+    //struct timespec convert_start, convert_end;
+    struct timespec cuMemcpy_start, cuMemcpy_end;
+    clock_gettime(CLOCK_REALTIME, &tcu_start);
+    clock_gettime(CLOCK_REALTIME, &init_start);
     int leftTupleNum = jNode->leftTable->tupleNum;
     int rightTupleNum = jNode->rightTable->tupleNum;
 
@@ -1159,13 +1167,13 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
     struct timespec count_start, count_end;
     struct timespec transpose_start, transpose_end;
 #endif
-    struct timespec tcu_start, tcu_end;
-    struct timespec init_start, init_end;
-    struct timespec fill_start, fill_end;
+    //struct timespec tcu_start, tcu_end;
+    //struct timespec init_start, init_end;
+    //struct timespec fill_start, fill_end;
     //struct timespec convert_start, convert_end;
-    struct timespec cuMemcpy_start, cuMemcpy_end;
-    clock_gettime(CLOCK_REALTIME, &tcu_start);
-    clock_gettime(CLOCK_REALTIME, &init_start);
+    //struct timespec cuMemcpy_start, cuMemcpy_end;
+    //clock_gettime(CLOCK_REALTIME, &tcu_start);
+    //clock_gettime(CLOCK_REALTIME, &init_start);
 
 #ifdef WMMA_INT4
     signed char *h_int_A, *h_int_B; // host int4 array
@@ -1182,7 +1190,7 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
 
     struct timespec gbCount_start, gbCount_end;
     float *h_red, *d_red;
-#if defined(RED)|| defined(REDHALF)
+#ifdef RED
     float *h_red2, *d_red2;
 #endif
     float alpha = 1.0f;
@@ -1289,11 +1297,13 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
     h_short_A = (short*)calloc(MATRIX_M*MATRIX_K, sizeof(short));
     h_short_B = (short*)calloc(MATRIX_N*MATRIX_K, sizeof(short));
 #endif
-
+    
     long foreignKeySize = jNode->leftTable->attrTotalSize[jNode->leftKeyIndex];
     long primaryKeySize = sizeof(int) * jNode->rightTable->tupleNum;
+
     CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&gpu_fact,foreignKeySize));
     CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&gpu_dim,primaryKeySize));
+
     c_host_cublas = (float*)calloc(MATRIX_M*MATRIX_N, sizeof(float));
     CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&c_cublas, (uint64_t)MATRIX_M * (uint64_t)MATRIX_N * sizeof(float)));
     CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&d_fp16_A, (uint64_t)MATRIX_M * (uint64_t)MATRIX_K * sizeof(half)));
@@ -1333,13 +1343,11 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
     h_released_B = (short*)calloc(MATRIX_N, sizeof(short));
 #endif
 
-#ifdef CUBLAS_HALF
     h_red = (float*)calloc(MATRIX_N, sizeof(float));
     CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&d_red, MATRIX_N * sizeof(float)));
-#if defined(RED)|| defined(REDHALF)
+#ifdef RED
     h_red2 = (float*)calloc(MATRIX_M, sizeof(float));
     CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&d_red2, MATRIX_M * sizeof(float)));
-#endif
 #endif
 #elif CUBLAS
     h_fp32_A =     (float*)calloc(MATRIX_M*MATRIX_K, sizeof(float));
@@ -1362,7 +1370,7 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
     CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&c_wmma_sum1, MATRIX_M * MATRIX_N * sizeof(float)));
     CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&c_wmma_sum2, MATRIX_M * MATRIX_N * sizeof(float)));
 
-    // mask
+    // mask reduction
     h_fp32_mask = (float*)calloc(MATRIX_M*MATRIX_N, sizeof(float));
     h_fp32_mask2 = (float*)calloc(MATRIX_M*MATRIX_N, sizeof(float));
     CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&d_fp32_mask, MATRIX_M * MATRIX_N * sizeof(float)));
@@ -1374,9 +1382,10 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
 #endif
     clock_gettime(CLOCK_REALTIME, &init_end);
 
-//    clock_gettime(CLOCK_REALTIME, &fill_start); 
 #ifdef WMMA_INT4
+    clock_gettime(CLOCK_REALTIME, &fill_start); 
     tcu_match(jNode, MATRIX_K, h_int_A, h_int_B, jNode->leftTable->attrType[0], jNode->rightTable->attrType[0]);
+    clock_gettime(CLOCK_REALTIME, &fill_end); 
 #elif CUBLAS_HALF
 
 #ifdef BEER
@@ -1390,7 +1399,6 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
          h_style_A, h_style_B,
          h_abv_A, h_abv_B);
 #elif ITUNES
-    //clock_gettime(CLOCK_REALTIME, &itunesFill_start);
     itunes_match(jNode, MATRIX_K,
          h_short_A, h_short_B, 
          jNode->leftTable->attrType[0], jNode->rightTable->attrType[0], 
@@ -1405,90 +1413,97 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
          h_time_A, h_time_B,
          h_released_A, h_released_B
          );
-    //clock_gettime(CLOCK_REALTIME, &itunesFill_end);
 #else // matrix-multiplication join count
     //tcu_match(jNode, MATRIX_K, h_short_A, h_short_B, jNode->leftTable->attrType[0], jNode->rightTable->attrType[0]);
     int A_tupleNum = jNode->leftTable->tupleNum;
     int B_tupleNum = jNode->rightTable->tupleNum;
+
     // cudaMemcpyHostToDevice raw data->char *column
     clock_gettime(CLOCK_REALTIME, &cuMemcpy_start);
     CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(gpu_fact,jNode->leftTable->content[jNode->leftKeyIndex], foreignKeySize,cudaMemcpyHostToDevice));
     CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(gpu_dim,jNode->rightTable->content[jNode->rightKeyIndex], primaryKeySize,cudaMemcpyHostToDevice));
     clock_gettime(CLOCK_REALTIME, &cuMemcpy_end);
+
     clock_gettime(CLOCK_REALTIME, &fill_start); 
-    gpu_fill<<<(MAX_THREADS + A_tupleNum -1)/MAX_THREADS, MAX_THREADS>>> (gpu_fact,
+    gpu_fill<<<(MAX_THREADS+A_tupleNum-1)/MAX_THREADS,MAX_THREADS>>> (gpu_fact,
             MATRIX_K,
             d_fp16_A,
             A_tupleNum,
             jNode->leftTable->attrType[0]);
-    gpu_fill<<<(MAX_THREADS + B_tupleNum -1)/MAX_THREADS, MAX_THREADS>>> (gpu_dim,
+    gpu_fill<<<(MAX_THREADS+B_tupleNum-1)/MAX_THREADS,MAX_THREADS>>> (gpu_dim,
             MATRIX_K,
             d_fp16_B,
             B_tupleNum,
             jNode->rightTable->attrType[0]);
     clock_gettime(CLOCK_REALTIME, &fill_end); 
-
 #endif
 
 #else  //WMMA_HALF or CUBLAS    
+    clock_gettime(CLOCK_REALTIME, &fill_start); 
     tcu_match(jNode, MATRIX_K, h_fp32_A, h_fp32_B, jNode->leftTable->attrType[0], jNode->rightTable->attrType[0]);
+    clock_gettime(CLOCK_REALTIME, &fill_end); 
 #ifdef CUBLAS
     /*    
+    // two matrices with all numbers perform MM
     micro_mm(jNode, h_fp32_A, h_fp32_B, MATRIX_M,
             jNode->leftTable->totalAttr, jNode->rightTable->totalAttr, 
             jNode->leftTable->attrType[0], jNode->rightTable->attrType[0]);
     */
 #endif
-#endif
-//    clock_gettime(CLOCK_REALTIME, &fill_end);
 
+#endif // all modes filling matrix end
+
+clock_gettime(CLOCK_REALTIME, &maskRED_start); 
 #ifdef CUBLAS_HALF
     setVector(h_red, MATRIX_N);
     CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(d_red, h_red, sizeof(float) * MATRIX_N, cudaMemcpyHostToDevice));
-#if defined(RED) || defined(REDHALF)
+#ifdef RED
     setVector(h_red2, MATRIX_M);
     CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(d_red2, h_red2, sizeof(float) * MATRIX_M, cudaMemcpyHostToDevice));
 #endif
-#endif
 
-//    clock_gettime(CLOCK_REALTIME, &cuMemcpy_start);
+#endif // maskRED for CUBLAS_HALF end
+clock_gettime(CLOCK_REALTIME, &maskRED_end); 
+
 #ifdef WMMA_INT4
+    clock_gettime(CLOCK_REALTIME, &cuMemcpy_start);
     CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(d_int_A, h_int_A, sizeof(signed char) * MATRIX_M * MATRIX_K, cudaMemcpyHostToDevice));
     CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(d_int_B, h_int_B, sizeof(signed char) * MATRIX_K * MATRIX_N, cudaMemcpyHostToDevice));
+    clock_gettime(CLOCK_REALTIME, &cuMemcpy_ebd);
 #elif WMMA_HALF
+    clock_gettime(CLOCK_REALTIME, &cuMemcpy_start);
     CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(d_fp32_A, h_fp32_A, sizeof(float) * MATRIX_M * MATRIX_K, cudaMemcpyHostToDevice));
+    CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(d_fp32_B, h_fp32_B, sizeof(float) * MATRIX_K * MATRIX_N, cudaMemcpyHostToDevice));
+    clock_gettime(CLOCK_REALTIME, &cuMemcpy_end);
+
     convertFp32ToFp16<<< (MATRIX_M * MATRIX_K + 255) / 256, 256 >>> (d_fp16_A, d_fp32_A, MATRIX_M * MATRIX_K);
     cudaErrCheck(cudaFree(d_fp32_A));
-    CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(d_fp32_B, h_fp32_B, sizeof(float) * MATRIX_K * MATRIX_N, cudaMemcpyHostToDevice));
     convertFp32ToFp16<<< (MATRIX_K * MATRIX_N + 255) / 256, 256 >>> (d_fp16_B, d_fp32_B, MATRIX_K * MATRIX_N);
     cudaErrCheck(cudaFree(d_fp32_B));
-    CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(d_fp32_mask, h_fp32_mask, sizeof(float) * MATRIX_M * MATRIX_N, cudaMemcpyHostToDevice));
-    convertFp32ToFp16<<< (MATRIX_N * MATRIX_K + 255) / 256, 256 >>> (d_fp16_mask, d_fp32_mask, MATRIX_M * MATRIX_N);
-    cudaErrCheck(cudaFree(d_fp32_mask));
-    CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(d_fp32_mask2, h_fp32_mask2, sizeof(float) * MATRIX_M * MATRIX_N, cudaMemcpyHostToDevice));
-    convertFp32ToFp16<<< (MATRIX_N * MATRIX_K + 255) / 256, 256 >>> (d_fp16_mask2, d_fp32_mask2, MATRIX_M * MATRIX_N);
-    cudaErrCheck(cudaFree(d_fp32_mask2));
+    //CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(d_fp32_mask, h_fp32_mask, sizeof(float) * MATRIX_M * MATRIX_N, cudaMemcpyHostToDevice));
+    //convertFp32ToFp16<<< (MATRIX_N * MATRIX_K + 255) / 256, 256 >>> (d_fp16_mask, d_fp32_mask, MATRIX_M * MATRIX_N);
+    //cudaErrCheck(cudaFree(d_fp32_mask));
+    //CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(d_fp32_mask2, h_fp32_mask2, sizeof(float) * MATRIX_M * MATRIX_N, cudaMemcpyHostToDevice));
+    //convertFp32ToFp16<<< (MATRIX_N * MATRIX_K + 255) / 256, 256 >>> (d_fp16_mask2, d_fp32_mask2, MATRIX_M * MATRIX_N);
+    //cudaErrCheck(cudaFree(d_fp32_mask2));
 #elif CUBLAS_HALF
-    /*
-    dim3 gridDim;
-    dim3 blockDim;
-    blockDim.x = 32;
-    blockDim.y = 32;
-    gridDim.x = (MATRIX_M + (blockDim.x - 1)) / (blockDim.x);
-    gridDim.y = (MATRIX_K + blockDim.y - 1) / (blockDim.y);
-    gpu_transpose<<< gridDim, blockDim >>> (d_short_BT, d_short_B, MATRIX_N, MATRIX_K);
-    */
     clock_gettime(CLOCK_REALTIME, &transpose_start);
-    //gpu_transpose<<< (MATRIX_N * MATRIX_K + 255) / 256, 256 >>> (d_short_BT, d_short_B, MATRIX_N, MATRIX_K);
     gpu_transpose<<< (MATRIX_N * MATRIX_K + 255) / 256, 256 >>> (d_fp16_BT, d_fp16_B, MATRIX_N, MATRIX_K);
     clock_gettime(CLOCK_REALTIME, &transpose_end);
-#else // CUBLAS
+
+    cudaErrCheck(cudaFree(d_fp16_B));
+#elif CUBLAS
+    clock_gettime(CLOCK_REALTIME, &cuMemcpy_start);
     CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(d_fp32_A, h_fp32_A, sizeof(float) * MATRIX_M * MATRIX_K, cudaMemcpyHostToDevice));
     CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(d_fp32_B, h_fp32_B, sizeof(float) * MATRIX_N * MATRIX_K, cudaMemcpyHostToDevice));
+    clock_gettime(CLOCK_REALTIME, &cuMemcpy_end);
+
+    clock_gettime(CLOCK_REALTIME, &transpose_start);
     gpu_transpose<<< (MATRIX_N * MATRIX_K + 255) / 256, 256 >>> (d_fp32_BT, d_fp32_B, MATRIX_N, MATRIX_K);
+    clock_gettime(CLOCK_REALTIME, &transpose_end);
+
     cudaErrCheck(cudaFree(d_fp32_B));
 #endif
-//    clock_gettime(CLOCK_REALTIME, &cuMemcpy_end);
 
 #ifdef WMMA_HALF 
     printf("\nM = %d, N = %d, K = %d. alpha = %.2f, beta = %.2f\n\n", MATRIX_M, MATRIX_N, MATRIX_K, alpha, beta);
@@ -1530,7 +1545,7 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
     CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void **)&red_sum, MATRIX_M * sizeof(float)));
     CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void **)&gbCount, sizeof(int)));
     CUDA_SAFE_CALL_NO_SYNC(cudaMemset(gbCount, 0, sizeof(int)));
-#if defined(RED)||defined(REDHALF)
+#ifdef RED
     float *red_sum2;
     CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void **)&red_sum2, 1 * sizeof(float)));
 #endif
@@ -1566,16 +1581,6 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
                 d_gemv, 1));
 
                 */
-#elif REDHALF
-    cublasErrCheck(cublasHgemm(cublasHandle, CUBLAS_OP_N, CUBLAS_OP_N,
-                MATRIX_N, MATRIX_M, MATRIX_K,
-                &alpha_fp16,
-                d_fp16_BT,MATRIX_N,
-                d_fp16_A,MATRIX_K,
-                &beta_fp16,
-                c_fp16_cublas, MATRIX_N));
-
-    convertFp16ToFp32<<< (MATRIX_M * MATRIX_N + 255) / 256, 256 >>> (c_cublas, c_fp16_cublas, MATRIX_M * MATRIX_N);
 #else
     if (gb) {
         cublasErrCheck(cublasGemmEx(cublasHandle, CUBLAS_OP_N, CUBLAS_OP_N,
@@ -1587,6 +1592,7 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
                 c_cublas, CUDA_R_32F, MATRIX_N,
                 CUDA_R_32F, CUBLAS_GEMM_DFALT_TENSOR_OP)); // tcu
 
+        clock_gettime(CLOCK_REALTIME, &gbCount_start);
         cublasErrCheck(cublasGemmEx(cublasHandle, CUBLAS_OP_N, CUBLAS_OP_N,
                 1, MATRIX_M, MATRIX_N,
                 &alpha,
@@ -1596,12 +1602,16 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
                 red_sum, CUDA_R_32F, 1,
                 CUDA_R_32F, CUBLAS_GEMM_DFALT_TENSOR_OP)); // tcu
 
-        clock_gettime(CLOCK_REALTIME, &gbCount_start);
+        /*
+        // implements COUNT operation -- return node.id with outdegree cnt
         if (gb->gbExp[1].func == COUNT)
             count_op<<<(MATRIX_M + 255) / 256, 256>>> (red_sum, MATRIX_M);
+        */
+        //clock_gettime(CLOCK_REALTIME, &gbCount_start);
         gb_count<<<(MATRIX_M + 255) / 256, 256>>> (red_sum, MATRIX_M, gbCount);
         clock_gettime(CLOCK_REALTIME, &gbCount_end);
     } else {
+        // no group by keyword, directly perform cublasHgemm
         cublasErrCheck(cublasHgemm(cublasHandle, CUBLAS_OP_N, CUBLAS_OP_N,
                 MATRIX_N, MATRIX_M, MATRIX_K,
                 &alpha_fp16,
@@ -1611,10 +1621,12 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
                 c_fp16_cublas, MATRIX_N));
     }
 #endif
-
+    // cudaFree inputs
     cudaErrCheck(cudaFree(d_fp16_A));
     cudaErrCheck(cudaFree(d_fp16_BT));
-#if defined(RED) || defined(REDHALF)
+
+#if defined(RED)
+    clock_gettime(CLOCK_REALTIME, &gbCount_start);
     // 1st reduction
     cublasErrCheck(cublasGemmEx(cublasHandle, CUBLAS_OP_N, CUBLAS_OP_N,
                 1, MATRIX_M, MATRIX_N,
@@ -1627,9 +1639,7 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
 
     // return groupBy count
     if (gb) {
-        clock_gettime(CLOCK_REALTIME, &gbCount_start);
         gb_count<<<(MATRIX_M + 255) / 256, 256>>> (red_sum, MATRIX_M, gbCount);
-        clock_gettime(CLOCK_REALTIME, &gbCount_end);
     }
     
     // 2nd reduction
@@ -1642,6 +1652,7 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
                 &beta,
                 red_sum2, CUDA_R_32F, 1,
                 CUDA_R_32F, CUBLAS_GEMM_DFALT_TENSOR_OP)); // tcu
+    clock_gettime(CLOCK_REALTIME, &gbCount_end);
     
 #endif
     cudaErrCheck(cudaEventRecord(stopcublasEX));
@@ -1677,19 +1688,8 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
     clock_gettime(CLOCK_REALTIME, &tmp_start);
     cudaErrCheck(cudaMemcpy(c_host_int_wmma, c_int_wmma, MATRIX_M * MATRIX_N * sizeof(float), cudaMemcpyDeviceToHost));
     cudaErrCheck(cudaFree(c_int_wmma));
-#ifdef DEBUG
-    printf("c_host_int_wmma:\n");
-    verify_result_int(c_host_int_wmma, MATRIX_M, MATRIX_N);
-#endif
     printf("Number of join results (CPU count): %d\n", sum_matrix_int(c_host_int_wmma, MATRIX_M, MATRIX_N));
     clock_gettime(CLOCK_REALTIME, &tmp_end);
-
-#elif CUBLAS_HALF
-
-#elif CUBLAS
-#ifdef DEBUG
-    cudaErrCheck(cudaMemcpy(c_host_sgemm, c_sgemm, MATRIX_M * MATRIX_N * sizeof(float), cudaMemcpyDeviceToHost));
-#endif
 #endif
 
 #ifdef CUBLAS_HALF
@@ -1724,11 +1724,10 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
             */
 #endif
 
-#if defined(RED) || defined(REDHALF)
+#ifdef RED
+    clock_gettime(CLOCK_REALTIME, &count_start);
     float *ans;
     ans = (float*)calloc(1, sizeof(float));
-    clock_gettime(CLOCK_REALTIME, &count_start);
-#if defined(RED) || defined(REDHALF)
     cudaErrCheck(cudaMemcpy(ans, red_sum2, 1 * sizeof(float), cudaMemcpyDeviceToHost));
     if (gb) {
         int h_gbCount = 0;
@@ -1737,14 +1736,13 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
         double gbCount_elapse = (gbCount_end.tv_sec -  gbCount_start.tv_sec)* BILLION + gbCount_end.tv_nsec - gbCount_start.tv_nsec;
         printf("GroupBy Time: %lf(ms)\n", gbCount_elapse/(1000*1000));
     }
-#endif
     clock_gettime(CLOCK_REALTIME, &count_end);
     printf("c_host_cublas reduction sum: %.0f\n", ans[0]);
     free(ans);
     cudaErrCheck(cudaFree(red_sum));
     cudaErrCheck(cudaFree(red_sum2));
-#else
-
+#else // not using Reduction, sum using cublasSasum
+    clock_gettime(CLOCK_REALTIME, &count_start);
     if (gb) {
         int h_gbCount = 0;
         cudaErrCheck(cudaMemcpy(&h_gbCount, gbCount, sizeof(int), cudaMemcpyDeviceToHost));
@@ -1753,12 +1751,12 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
         printf("GroupBy Time: %lf(ms)\n", gbCount_elapse/(1000*1000));
 
     } else {
+        // previous calculate by cublasHgemm: need conversion
         convertFp16ToFp32<<< (MATRIX_M * MATRIX_N + 255) / 256, 256 >>> (c_cublas, c_fp16_cublas, MATRIX_M * MATRIX_N);
     }
 
     uint64_t input_len = MATRIX_M*MATRIX_N;
     int asum_len = 200000000; // Sasum addition per section
-    clock_gettime(CLOCK_REALTIME, &count_start);
 
     cublasStatus_t ret;
     ret = cublasCreate(&cublasHandle);
@@ -1869,7 +1867,7 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
     printf("MMA total time: %lf(ms)\n", tcu_elapse/(1000*1000));
 #ifdef CUBLAS_HALF
     printf("cublasEX sum counting: %lf(ms)\n", count_elapse/(1000*1000));
-    printf("debug (cublasCreate): %lf(ms)\n", debug_elapse/(1000*1000));
+    printf("cublasCreate cold start: %lf(ms)\n", debug_elapse/(1000*1000));
     printf("gpu transpose: %lf(ms)\n", transpose_elapse/(1000*1000));
 #ifdef BEER
     printf("Beer filling time: %lf(ms)\n", beerFill_elapse/(1000*1000));
@@ -1878,7 +1876,7 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
 #endif
 #elif CUBLAS
     printf("cublasSGEMM sum counting: %lf(ms)\n", count_elapse/(1000*1000));
-    printf("debug (cublasCreate): %lf(ms)\n", debug_elapse/(1000*1000));
+    printf("cublasCreate cold start: %lf(ms)\n", debug_elapse/(1000*1000));
 #elif WMMA_HALF
     printf("Result verification: %lf(ms)\n", tmp_elapse/(1000*1000));
 #endif

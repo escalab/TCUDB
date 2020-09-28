@@ -2459,12 +2459,12 @@ def generate_code(tree):
                 if len(aggNode) > 0:
                     print >>fo, "\t\tstruct tableNode *join" + str(i-1) + " = tcuJoin(&" + jName + ",&pp, matrix_dim_ptr, gbNode);\n"
                 else:
-                    print >>fo, "\t\tstruct tableNode *join" + str(i-1) + " = tcuJoin(&" + jName + ",&pp, matrix_dim_ptr, NULL);\n"
+                    print >>fo, "\t\tstruct tableNode *join" + str(i) + " = tcuJoin(&" + jName + ",&pp, matrix_dim_ptr, NULL);\n"
             else:
                 if len(aggNode) > 0:
                     print >>fo, "\t\tstruct tableNode *join" + str(i-1) + " = tcuJoin(&" + jName + ", &context, &pp, &*matrix_dim_ptr, gbNode);\n" 
                 else:
-                    print >>fo, "\t\tstruct tableNode *join" + str(i-1) + " = tcuJoin(&" + jName + ", &context, &pp, &*matrix_dim_ptr, NULL);\n" 
+                    print >>fo, "\t\tstruct tableNode *join" + str(i) + " = tcuJoin(&" + jName + ", &context, &pp, &*matrix_dim_ptr, NULL);\n" 
 
             factName = "join" + str(i)
 
@@ -2472,9 +2472,16 @@ def generate_code(tree):
             print >>fo, "\t\tif(blockTotal !=1){"
 
             if CODETYPE == 0:
-                print >>fo, "\t\t\tmergeIntoTable("+resultNode+",join" + str(i-1) + ", &pp);"
+                if len(aggNode) > 0:
+                    print >>fo, "\t\t\tmergeIntoTable("+resultNode+",join" + str(i-1) + ", &pp);"
+                else:
+                    print >>fo, "\t\t\tmergeIntoTable("+resultNode+",join" + str(i) + ", &pp);"
             else:
-                print >>fo, "\t\t\tmergeIntoTable("+resultNode+",join" + str(i-1) + ", &context, &pp);"
+                if len(aggNode) > 0:
+                    print >>fo, "\t\t\tmergeIntoTable("+resultNode+",join" + str(i) + ", &context, &pp);"
+                else:
+                    print >>fo, "\t\t\tmergeIntoTable("+resultNode+",join" + str(i) + ", &context, &pp);"
+
                 
 
             print >>fo, "\t\t\tclock_gettime(CLOCK_REALTIME,&diskStart);"

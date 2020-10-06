@@ -1486,6 +1486,7 @@ def generate_code(tree):
             print >>fo, "\t\tstruct tableNode * " + resName + " = " + factName + ";"
 
         factName = resName
+        # FIXME:here is where the second calls to hashJoin happen
         for i in range(0,len(joinAttr.dimTables)):
             jName = "jNode" + str(i)
             dimName = joinAttr.dimTables[i].table_name.lower() + "Res"
@@ -2304,6 +2305,7 @@ def generate_code(tree):
             hasWhere = 0
             print >>fo, "\t\tstruct tableNode * " + resName + " = " + factName + ";"
 
+        #FIXME: maybe resName didn't be updated
         factName = resName
         for i in range(0,len(joinAttr.dimTables)):
             jName = "jNode" + str(i)
@@ -2366,7 +2368,7 @@ def generate_code(tree):
 
             # try to pass gbNode info to tcuJoin
             if joinType == 2:
-                if len(aggNode) > 0:
+                if (i == len(joinAttr.dimTables)-1 and len(aggNode) > 0):
                     gb_exp_list = aggNode[0].group_by_clause.groupby_exp_list
                     select_list = aggNode[0].select_list.tmp_exp_list
                     selectLen = len(select_list)
@@ -2455,12 +2457,12 @@ def generate_code(tree):
 
             # for i in range(0, gbLen or selectLen)
 
-            if CODETYPE == 0:
-                if len(aggNode) > 0:
+            if CODETYPE == 0: # CUDA
+                if (i > 0 and len(aggNode)) > 0:
                     print >>fo, "\t\tstruct tableNode *join" + str(i-1) + " = tcuJoin(&" + jName + ",&pp, matrix_dim_ptr, gbNode);\n"
                 else:
                     print >>fo, "\t\tstruct tableNode *join" + str(i) + " = tcuJoin(&" + jName + ",&pp, matrix_dim_ptr, NULL);\n"
-            else:
+            else: # OpenCL
                 if len(aggNode) > 0:
                     print >>fo, "\t\tstruct tableNode *join" + str(i-1) + " = tcuJoin(&" + jName + ", &context, &pp, &*matrix_dim_ptr, gbNode);\n" 
                 else:

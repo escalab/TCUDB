@@ -1602,11 +1602,13 @@ clock_gettime(CLOCK_REALTIME, &maskRED_end);
                 red_sum, CUDA_R_32F, 1,
                 CUDA_R_32F, CUBLAS_GEMM_DFALT_TENSOR_OP)); // tcu
 
+        
+        // implements COUNT operation -- print node.id with outdegree cnt
         /*
-        // implements COUNT operation -- return node.id with outdegree cnt
         if (gb->gbExp[1].func == COUNT)
             count_op<<<(MATRIX_M + 255) / 256, 256>>> (red_sum, MATRIX_M);
         */
+        
         //clock_gettime(CLOCK_REALTIME, &gbCount_start);
         gb_count<<<(MATRIX_M + 255) / 256, 256>>> (red_sum, MATRIX_M, gbCount);
         clock_gettime(CLOCK_REALTIME, &gbCount_end);

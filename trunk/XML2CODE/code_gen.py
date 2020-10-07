@@ -2458,7 +2458,10 @@ def generate_code(tree):
             # for i in range(0, gbLen or selectLen)
 
             if CODETYPE == 0: # CUDA
-                if (i > 0 and len(aggNode)) > 0:
+                if (i > 0 and len(aggNode) > 0):
+                    print >>fo, "\t\tstruct tableNode *join" + str(len(joinAttr.dimTables)-1) + " = tcuJoin(&" + jName + ",&pp, matrix_dim_ptr, gbNode);\n"
+                    #print >>fo, "\t\tstruct tableNode *join" + str(i-1) + " = tcuJoin(&" + jName + ",&pp, matrix_dim_ptr, gbNode);\n"
+                elif i > 0:
                     print >>fo, "\t\tstruct tableNode *join" + str(i-1) + " = tcuJoin(&" + jName + ",&pp, matrix_dim_ptr, gbNode);\n"
                 else:
                     print >>fo, "\t\tstruct tableNode *join" + str(i) + " = tcuJoin(&" + jName + ",&pp, matrix_dim_ptr, NULL);\n"
@@ -2474,7 +2477,11 @@ def generate_code(tree):
             print >>fo, "\t\tif(blockTotal !=1){"
 
             if CODETYPE == 0:
-                if len(aggNode) > 0:
+                if (len(aggNode) > 0 and len(joinAttr.dimTables) > 1):
+                    print >>fo, "\t\t\tmergeIntoTable("+resultNode+",join" + str(i) + ", &pp);"
+                    #print >>fo, "\t\t\tmergeIntoTable("+resultNode+",join" + str(len(joinAttr.dimTables)-1) + ", &pp);"
+                    #print >>fo, "\t\t\tmergeIntoTable("+resultNode+",join" + str(i-1) + ", &pp);"
+                elif i > 0:
                     print >>fo, "\t\t\tmergeIntoTable("+resultNode+",join" + str(i-1) + ", &pp);"
                 else:
                     print >>fo, "\t\t\tmergeIntoTable("+resultNode+",join" + str(i) + ", &pp);"

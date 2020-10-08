@@ -1429,12 +1429,12 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
             MATRIX_K,
             d_fp16_A,
             A_tupleNum,
-            jNode->leftTable->attrType[0]);
+            jNode->leftTable->attrType[jNode->leftKeyIndex]);
     gpu_fill<<<(MAX_THREADS+B_tupleNum-1)/MAX_THREADS,MAX_THREADS>>> (gpu_dim,
             MATRIX_K,
             d_fp16_B,
             B_tupleNum,
-            jNode->rightTable->attrType[0]);
+            jNode->rightTable->attrType[jNode->rightKeyIndex]);
     clock_gettime(CLOCK_REALTIME, &fill_end); 
 #endif
 

@@ -1126,7 +1126,21 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
         printf("jNode leftKeyIndex: %d\n", jNode->leftKeyIndex);
         printf("jNode rightKeyIndex: %d\n", jNode->rightKeyIndex);
     }*/
-    
+    struct tableNode * res = NULL;
+    res = (struct tableNode*) malloc(sizeof(struct tableNode));
+    res->totalAttr = jNode->totalAttr;
+    res->tupleSize = jNode->tupleSize;
+    res->attrType = (int *) malloc(res->totalAttr * sizeof(int));
+    CHECK_POINTER(res->attrType);
+    res->attrSize = (int *) malloc(res->totalAttr * sizeof(int));
+    CHECK_POINTER(res->attrSize);
+    res->attrIndex = (int *) malloc(res->totalAttr * sizeof(int));
+    CHECK_POINTER(res->attrIndex);
+    res->attrTotalSize = (int *) malloc(res->totalAttr * sizeof(int));
+    CHECK_POINTER(res->attrTotalSize);
+    res->content = (char **) malloc(res->totalAttr * sizeof(char *));
+    CHECK_POINTER(res->content);
+
 //#ifdef DEBUG
     cudaPrintfInit();
 //#endif
@@ -1423,6 +1437,9 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
     CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(gpu_fact,jNode->leftTable->content[jNode->leftKeyIndex], foreignKeySize,cudaMemcpyHostToDevice));
     CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(gpu_dim,jNode->rightTable->content[jNode->rightKeyIndex], primaryKeySize,cudaMemcpyHostToDevice));
     clock_gettime(CLOCK_REALTIME, &cuMemcpy_end);
+
+    res->attrSize[0] = jNode->leftTable->attrSize[jNode->leftOutputIndex[0]]; 
+    res->attrSize[1] = jNode->rightTable->attrSize[jNode->rightOutputIndex[0]]; 
 
     clock_gettime(CLOCK_REALTIME, &fill_start); 
     gpu_fill<<<(MAX_THREADS+A_tupleNum-1)/MAX_THREADS,MAX_THREADS>>> (gpu_fact,
@@ -1886,6 +1903,6 @@ clock_gettime(CLOCK_REALTIME, &maskRED_end);
     cudaPrintfDisplay(stdout, true);
     cudaPrintfEnd();
 //#endif
-    return 0; // non-void function
+    return res; // FIXME: return res node after tcuJoin 
 
 }

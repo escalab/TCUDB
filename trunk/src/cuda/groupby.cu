@@ -399,9 +399,9 @@ struct tableNode * groupBy(struct groupByNode * gb, struct statistic * pp){
     if(gbConstant !=1){ // query has group by keyword
         agg_cal<<<grid,block>>>(gpuContent, gpuGbColNum, gpuGbExp, gpuGbType, gpuGbSize, gpuTupleNum, gpuGbKey, gpu_psum, gpu_groupNum,gpuResult);
 
-        CUDA_SAFE_CALL_NO_SYNC(cudaFree(gpuGbKey));
-        CUDA_SAFE_CALL_NO_SYNC(cudaFree(gpu_psum));
-        CUDA_SAFE_CALL_NO_SYNC(cudaFree(gpu_groupNum));
+        //CUDA_SAFE_CALL_NO_SYNC(cudaFree(gpuGbKey));
+        //CUDA_SAFE_CALL_NO_SYNC(cudaFree(gpu_psum));
+        //CUDA_SAFE_CALL_NO_SYNC(cudaFree(gpu_groupNum));
     }else // query has no group by keyword
         agg_cal_cons<<<grid,block>>>(gpuContent, gpuGbColNum, gpuGbExp, gpuTupleNum,gpuResult);
 
@@ -410,11 +410,11 @@ struct tableNode * groupBy(struct groupByNode * gb, struct statistic * pp){
             CUDA_SAFE_CALL_NO_SYNC(cudaFree(column[i]));
     }
     free(column);
-    CUDA_SAFE_CALL_NO_SYNC(cudaFree(gpuContent));
-    CUDA_SAFE_CALL_NO_SYNC(cudaFree(gpuGbType));
-    CUDA_SAFE_CALL_NO_SYNC(cudaFree(gpuGbSize));
-    CUDA_SAFE_CALL_NO_SYNC(cudaFree(gpuGbExp));
-    CUDA_SAFE_CALL_NO_SYNC(cudaFree(gpuResult));
+    //CUDA_SAFE_CALL_NO_SYNC(cudaFree(gpuContent));
+    //CUDA_SAFE_CALL_NO_SYNC(cudaFree(gpuGbType));
+    //CUDA_SAFE_CALL_NO_SYNC(cudaFree(gpuGbSize));
+    //CUDA_SAFE_CALL_NO_SYNC(cudaFree(gpuGbExp));
+    //CUDA_SAFE_CALL_NO_SYNC(cudaFree(gpuResult));
 
     clock_gettime(CLOCK_REALTIME,&end);
     double timeE = (end.tv_sec -  start.tv_sec)* BILLION + end.tv_nsec - start.tv_nsec;

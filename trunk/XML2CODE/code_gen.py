@@ -2370,6 +2370,7 @@ def generate_code(tree):
             if joinType == 2:
                 if (i == len(joinAttr.dimTables)-1 and len(aggNode) > 0):
                     gb_exp_list = aggNode[0].group_by_clause.groupby_exp_list
+                    #print >>fo, "\t\tprintf("+ str(gb_exp_list) +");"
                     select_list = aggNode[0].select_list.tmp_exp_list
                     selectLen = len(select_list)
                     gbLen = len(gb_exp_list)
@@ -2392,8 +2393,8 @@ def generate_code(tree):
                             #print >>fo, "\tgbNode->groupBySize[" + str(i) + "] = gbNode->table->attrSize[" + str(exp.column_name) + "];" 
                         elif isinstance(exp, ystree.YConsExp):
                             print >>fo, "\t\tgbNode->groupByIndex[" + str(i) + "] = -1;" 
-                            print >>fo, "\t\tgbNode->groupByType[" + str(i) + "] = INT;" 
-                            print >>fo, "\t\tgbNode->groupBySize[" + str(i) + "] = sizeof(int);" 
+                            #print >>fo, "\t\tgbNode->groupByType[" + str(i) + "] = INT;" 
+                            #print >>fo, "\t\tgbNode->groupBySize[" + str(i) + "] = sizeof(int);" 
                         else:
                             print 1/0
 
@@ -2463,6 +2464,8 @@ def generate_code(tree):
                     #print >>fo, "\t\tstruct tableNode *join" + str(i-1) + " = tcuJoin(&" + jName + ",&pp, matrix_dim_ptr, gbNode);\n"
                 elif i > 0:
                     print >>fo, "\t\tstruct tableNode *join" + str(i-1) + " = tcuJoin(&" + jName + ",&pp, matrix_dim_ptr, gbNode);\n"
+                elif (i == 0 and len(aggNode) > 0):
+                    print >>fo, "\t\tstruct tableNode *join" + str(i) + " = tcuJoin(&" + jName + ",&pp, matrix_dim_ptr, gbNode);\n"
                 else:
                     print >>fo, "\t\tstruct tableNode *join" + str(i) + " = tcuJoin(&" + jName + ",&pp, matrix_dim_ptr, NULL);\n"
             else: # OpenCL

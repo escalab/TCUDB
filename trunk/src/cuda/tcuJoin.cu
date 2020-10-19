@@ -277,7 +277,7 @@ __global__ static void gb_count(float *red_sum, int length, int *cnt) {
 
 /* Fill the actual float value for PageRank calculation. 
    Pagerank.ranking and Outdegree.degree */
-__global__ void pagerank(char *columnIdx, char *columnVal, int matWidth, half *mat, size_t tupleNum, int attrTypeSize, int attrType) {
+__global__ void pagerank(char *columnIdx, char *columnVal, int matWidth, half *mat, size_t tupleNum, int attrTypeSize, int attrType, float pagerank_cons) {
     int i = blockDim.x * blockIdx.x + threadIdx.x;
     if (i < tupleNum) {
         int stripe = i * attrTypeSize;
@@ -285,12 +285,13 @@ __global__ void pagerank(char *columnIdx, char *columnVal, int matWidth, half *m
         // FIXME: not sure if it will encounter precision loss
         if (attrType == INT) {
             int *val = (int*)&columnVal[stripe];
-            mat[i*matWidth + (*id)] = (half)(*val);
-            cuPrintf("mat[%d]\t%d\n", i*matWidth + (*id), *val);
+            mat[i*matWidth + (*id)] = __float2half((float)1/(*val));
+            //cuPrintf("mat[%d]\t%d\n", i*matWidth + (*id), *val);
         } else if (attrType == FLOAT) {
             float *val   = (float*)&columnVal[stripe];
-            mat[i*matWidth + (*id)] = __float2half(*val);
-            cuPrintf("mat[%d]\t%.8f\n", i*matWidth + (*id), *val);
+            
+            mat[i*matWidth + (*id)] = __float2half((*val)*pagerank_cons);
+            //cuPrintf("mat[%d]\t%.8f\n", i*matWidth + (*id), *val);
         }
     }
 }
@@ -327,7 +328,7 @@ __host__ void static verify_test(half *matrix, int height, int width) {
 __host__ void static verify_result(float * matrix, int height, int width) {
     int i;
     for (i = 0; i < height*width; i++) {
-        printf("%.0f\t", matrix[i]);
+        printf("%.8f\t", matrix[i]);
         if ((i+1) % width == 0)
             printf("\n\n");  
     }
@@ -1139,7 +1140,11 @@ __global__ void wmma_int(signed char *a, signed char *b, int *c, int M, int N, i
  */
 struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *matrix_dim, struct groupByNode *gb){
     //printf("COUNT: %d\n", COUNT);
-    printf("func: %d\n", gb->gbExp[1].func);
+#ifdef PAGERANK
+    //printf("func: %d\n", gb->gbExp[0].func);
+    printf("PageRank constant: %.3f\n", ((struct mathExp *)((struct mathExp *) gb->gbExp[0].exp.exp)[0].exp)[0].consValue);
+    printf("1/#node: %.5f\n", ((struct mathExp *) gb->gbExp[0].exp.exp)[1].consValue);
+#endif
     /*
     if (gb) {
         printf("groupByIndex[0]: %d\n", gb->groupByIndex[0]);
@@ -1189,9 +1194,9 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
     MATRIX_N = (uint64_t)rightTupleNum;
 #endif
     MATRIX_K = *matrix_dim; // user input, matrix width (if WMMA, multiple of 16)
-    printf("MATRIX_M: %lu\n", MATRIX_M);
-    printf("MATRIX_N: %lu\n", MATRIX_N);
-    printf("MATRIX_K: %lu\n", MATRIX_K);
+//    printf("MATRIX_M: %lu\n", MATRIX_M);
+//    printf("MATRIX_N: %lu\n", MATRIX_N);
+//    printf("MATRIX_K: %lu\n", MATRIX_K);
 
 #ifdef DEBUG
     printf("left  tuple #: %d\n", leftTupleNum);
@@ -1343,16 +1348,16 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
     
     long foreignKeySize = jNode->leftTable->attrTotalSize[jNode->leftKeyIndex];
     long primaryKeySize = sizeof(int) * jNode->rightTable->tupleNum;
-    printf("jNode->leftKeyIndex: %d\n", jNode->leftKeyIndex);
-    printf("jNode->rightKeyIndex: %d\n", jNode->rightKeyIndex);
-    printf("foreignKeySize: %ld\n", foreignKeySize);
-    printf("left output num: %d\n", jNode->leftOutputAttrNum);
-    printf("right output num: %d\n", jNode->rightOutputAttrNum);
-    printf("left output index content: %.8f\n", *(float*)(&jNode->leftTable->content[0][0]));
-    printf("right output index content: %d\n", *(int*)(&jNode->rightTable->content[0][0]));
-    printf("left output index: %d\n", jNode->leftOutputIndex[jNode->leftOutputAttrNum-1]);
-    printf("right output index: %d\n", jNode->rightOutputIndex[jNode->rightOutputAttrNum-1]);
-    printf("Res Size: %ld\n", 4*MATRIX_M*MATRIX_N);
+    //printf("jNode->leftKeyIndex: %d\n", jNode->leftKeyIndex);
+    //printf("jNode->rightKeyIndex: %d\n", jNode->rightKeyIndex);
+    //printf("foreignKeySize: %ld\n", foreignKeySize);
+    //printf("left output num: %d\n", jNode->leftOutputAttrNum);
+    //printf("right output num: %d\n", jNode->rightOutputAttrNum);
+    //printf("left output index content: %.8f\n", *(float*)(&jNode->leftTable->content[0][0]));
+    //printf("right output index content: %d\n", *(int*)(&jNode->rightTable->content[0][0]));
+    //printf("left output index: %d\n", jNode->leftOutputIndex[jNode->leftOutputAttrNum-1]);
+    //printf("right output index: %d\n", jNode->rightOutputIndex[jNode->rightOutputAttrNum-1]);
+    //printf("Res Size: %ld\n", 4*MATRIX_M*MATRIX_N);
 
     CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&gpu_fact,foreignKeySize));
     CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&gpu_dim,primaryKeySize));
@@ -1483,7 +1488,7 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
     int dimCol = jNode->rightOutputIndex[jNode->rightOutputAttrNum-1];
     CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(factVal,jNode->leftTable->content[factCol], foreignKeySize,cudaMemcpyHostToDevice));
     //printf("dimCol: %d\n", dimCol);
-    printf("right output index content: %d\n", *(int*)(&jNode->rightTable->content[0][4]));
+    //printf("right output index content: %d\n", *(int*)(&jNode->rightTable->content[0][4]));
     CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(dimVal,jNode->rightTable->content[dimCol], primaryKeySize,cudaMemcpyHostToDevice));
 #endif
     clock_gettime(CLOCK_REALTIME, &cuMemcpy_end);
@@ -1501,7 +1506,8 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
                 d_fp16_A,
                 A_tupleNum,
                 jNode->leftTable->attrType[jNode->leftKeyIndex],
-                jNode->leftTable->attrType[factCol]); 
+                jNode->leftTable->attrType[factCol],
+                ((struct mathExp *)((struct mathExp *) gb->gbExp[0].exp.exp)[0].exp)[0].consValue); 
         cudaErrCheck(cudaFree(gpu_fact));
         cudaErrCheck(cudaFree(factVal));
         //printf("right attr type: %d\n", jNode->rightTable->attrType[dimCol]);
@@ -1511,7 +1517,8 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
                 d_fp16_B,
                 B_tupleNum,
                 jNode->rightTable->attrType[jNode->rightKeyIndex],
-                jNode->rightTable->attrType[dimCol]); 
+                jNode->rightTable->attrType[dimCol],
+                1.0); 
         cudaErrCheck(cudaFree(gpu_dim));
         cudaErrCheck(cudaFree(dimVal));
     }
@@ -1682,7 +1689,6 @@ clock_gettime(CLOCK_REALTIME, &maskRED_end);
     // FIXME: YDB's groupby is not group by clause but aggregate function
     // outdegree.sql, gb->gbExp[0].func == DESC
     if (gb && gb->gbExp[1].func == COUNT) {
-        printf("line 1675\n");
         cublasErrCheck(cublasGemmEx(cublasHandle, CUBLAS_OP_N, CUBLAS_OP_N,
                 MATRIX_N, MATRIX_M, MATRIX_K,
                 &alpha,
@@ -1713,12 +1719,31 @@ clock_gettime(CLOCK_REALTIME, &maskRED_end);
         gb_count<<<(MATRIX_M + 255) / 256, 256>>> (red_sum, MATRIX_M, gbCount);
         clock_gettime(CLOCK_REALTIME, &gbCount_end);
     } else if (gb && gb->gbExp[0].func == SUM) { // no group by clause, only SUM
-        printf("line 1706\n");
+        //NOTE: here
+        cublasErrCheck(cublasHgemm(cublasHandle, CUBLAS_OP_N, CUBLAS_OP_N,
+                MATRIX_N, MATRIX_M, MATRIX_K,
+                &alpha_fp16,
+                d_fp16_BT,MATRIX_N,
+                d_fp16_A,MATRIX_K,
+                &beta_fp16,
+                c_fp16_cublas, MATRIX_N));
+        CUDA_SAFE_CALL_NO_SYNC(cudaMemset(c_cublas, MATRIX_M * MATRIX_N, sizeof(float)));
+        convertFp16ToFp32<<< (MATRIX_M * MATRIX_N + 255) / 256, 256 >>> (c_cublas, c_fp16_cublas, MATRIX_M * MATRIX_N);
+        cudaErrCheck(cudaMemcpy(c_host_cublas, c_cublas, MATRIX_M * MATRIX_N * sizeof(float), cudaMemcpyDeviceToHost));
+        verify_result(c_host_cublas, MATRIX_M, MATRIX_N);
+        /*
+        float *test_hB = (float*)calloc(MATRIX_K*MATRIX_N, sizeof(float));
+        float *test_dB;
+        CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&test_dB, MATRIX_N * MATRIX_K * sizeof(float)));
+        convertFp16ToFp32<<< (MATRIX_M * MATRIX_K + 255) / 256, 256 >>> (test_dB, d_fp16_BT, MATRIX_N * MATRIX_K);
+        cudaErrCheck(cudaMemcpy(test_hB, test_dB, MATRIX_N * MATRIX_K * sizeof(float), cudaMemcpyDeviceToHost));
+        printf("print to debug:\n");
+        verify_result(test_hB, MATRIX_N, MATRIX_K);
+        */
             
     } else {
         //TODO: maybe the PAGERANK should only call Hgemm and print res for verification
         // copy back to host
-        printf("line 1711\n");
 
         // no group by keyword, directly perform cublasHgemm
         cublasErrCheck(cublasHgemm(cublasHandle, CUBLAS_OP_N, CUBLAS_OP_N,
@@ -1857,7 +1882,7 @@ clock_gettime(CLOCK_REALTIME, &maskRED_end);
     cudaErrCheck(cudaFree(red_sum2));
 #else // not using Reduction, sum using cublasSasum
     clock_gettime(CLOCK_REALTIME, &count_start);
-    if (gb) {
+    if (gb && gb->gbExp[1].func == COUNT) {
         int h_gbCount = 0;
         cudaErrCheck(cudaMemcpy(&h_gbCount, gbCount, sizeof(int), cudaMemcpyDeviceToHost));
         printf("groupBy count: %d\n", h_gbCount);
@@ -1868,7 +1893,8 @@ clock_gettime(CLOCK_REALTIME, &maskRED_end);
         // previous calculate by cublasHgemm: need conversion
         convertFp16ToFp32<<< (MATRIX_M * MATRIX_N + 255) / 256, 256 >>> (c_cublas, c_fp16_cublas, MATRIX_M * MATRIX_N);
     }
-
+#ifdef PAGERANK
+#else
     uint64_t input_len = MATRIX_M*MATRIX_N;
     int asum_len = 200000000; // Sasum addition per section
 
@@ -1896,6 +1922,8 @@ clock_gettime(CLOCK_REALTIME, &maskRED_end);
         clock_gettime(CLOCK_REALTIME, &count_end);
         printf("c_host_cublas sum: %lu\n", sum_res);
     }
+#endif // end of PAGERANK
+
 #endif
     printf("cublasEX tensor cores (FP16) took %fms\n", cublasEXTime);
     

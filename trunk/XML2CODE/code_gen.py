@@ -698,6 +698,7 @@ def printMathFunc(fo,prefix, mathFunc):
         print >>fo, prefix + ".exp = 0;"
         print >>fo, prefix + ".opType = CONS;"
         print >>fo, prefix + ".opValue = " + str(mathFunc.value) + ";"
+        print >>fo, prefix + ".consValue = " + str(mathFunc.value) + ";"
     else:
         print >>fo, prefix + ".op = " + mathFunc.opName + ";"
         print >>fo, prefix + ".opNum = 2;"
@@ -2432,6 +2433,7 @@ def generate_code(tree):
                             print >>fo, "\t\tgbNode->gbExp[" + str(i) + "].exp.opNum = 1;"
                             print >>fo, "\t\tgbNode->gbExp[" + str(i) + "].exp.opType = COLUMN;"
                             print >>fo, "\t\tgbNode->gbExp[" + str(i) + "].exp.opValue = " + str(exp.column_name) + ";"
+                            #print >>fo, "\t\tgbNode->gbExp[" + str(i) + "].exp.consValue = " + str(exp.column_name) + ";"
             
                         else:
                             if exp.cons_type == "INTEGER":
@@ -2453,6 +2455,7 @@ def generate_code(tree):
                             print >>fo, "\t\tgbNode->gbExp[" + str(i) + "].exp.opNum = 1;"
                             print >>fo, "\t\tgbNode->gbExp[" + str(i) + "].exp.opType = CONS;"
                             print >>fo, "\t\tgbNode->gbExp[" + str(i) + "].exp.opValue = " + str(exp.cons_value) + ";"
+                            #print >>fo, "\t\tgbNode->gbExp[" + str(i) + "].exp.consValue = " + str(exp.cons_value) + ";"
                             # until this point
     
 

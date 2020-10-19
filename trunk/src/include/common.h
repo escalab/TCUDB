@@ -177,6 +177,7 @@ struct mathExp {
 /* when opNum is 1 */
     int opType;         /* whether it is a regular column or a constant */
     int opValue;        /* it is the index of the column or the value of the constant */
+    float consValue; /* temp for pagerank */
 };
 
 struct tableNode{

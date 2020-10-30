@@ -708,6 +708,31 @@ def printMathFunc(fo,prefix, mathFunc):
         printMathFunc(fo,prefix1,mathFunc.leftOp)
         printMathFunc(fo,prefix2,mathFunc.rightOp)
 
+
+def printMathFunc2(fo,prefix, mathFunc,attrList):
+
+    if mathFunc.opName == "COLUMN":
+        print >>fo, prefix + ".op = NOOP;" 
+        print >>fo, prefix + ".opNum = 1;"
+        print >>fo, prefix + ".exp = 0;"
+        print >>fo, prefix + ".opType = COLUMN;"
+        print >>fo, prefix + ".opValue = " + str(mathFunc.value) + ";"
+        print >>fo, prefix + ".dataType = " + to_ctype(attrList[0].type) + ";"
+    elif mathFunc.opName == "CONS":
+        print >>fo, prefix + ".op = NOOP;" 
+        print >>fo, prefix + ".opNum = 1;"
+        print >>fo, prefix + ".exp = 0;"
+        print >>fo, prefix + ".opType = CONS;"
+        print >>fo, prefix + ".opValue = " + str(mathFunc.value) + ";"
+        print >>fo, prefix + ".dataType = " + to_ctype(attrList[0].type) + ";"
+    else:
+        print >>fo, prefix + ".op = " + mathFunc.opName + ";"
+        print >>fo, prefix + ".opNum = 2;"
+        print >>fo, prefix + ".exp = (long) malloc(sizeof(struct mathExp) * 2);"
+        prefix1 = "((struct mathExp *)" + prefix + ".exp)[0]"
+        prefix2 = "((struct mathExp *)"+ prefix + ".exp)[1]"
+        printMathFunc2(fo,prefix1,mathFunc.leftOp,attrList[0])
+        printMathFunc2(fo,prefix2,mathFunc.rightOp,attrList[1])
 """
 generate_col_list gets all the columns that will be scannned for a given table node.
 @indexList stores the index of each column.
@@ -1577,6 +1602,9 @@ def generate_code(tree):
             print >>fo, "\t\t\tclock_gettime(CLOCK_REALTIME,&diskStart);"
             print >>fo, "\t\t\tfreeTable(" +resultNode + ");"
             print >>fo, "\t\t\t"+resultNode+" = join" + str(i) + ";" 
+            print >>fo, "\t\t\t"+resultNode+"->factType"+" = " + "jNode0.leftOutputAttrType[0];"
+            print >>fo, "\t\t\t"+resultNode+"->dimType"+" = " + "jNode0.rightOutputAttrType[0];"
+            
             for i in range(0,len(joinAttr.dimTables)-1):
                 jName = "join" + str(i)
                 print >>fo, "\t\t\tfreeTable(" + jName + ");"
@@ -1599,6 +1627,8 @@ def generate_code(tree):
             print >>fo, "\t\t\tclock_gettime(CLOCK_REALTIME,&diskStart);"
             print >>fo, "\t\t\tfreeTable(" +resultNode + ");"
             print >>fo, "\t\t\t"+resultNode+" = " + resName + ";"
+            #print >>fo, "\t\t\t"+resultNode+"->factType"+" = " + "jNode0.leftOutputAttrType[0];"
+            #print >>fo, "\t\t\t"+resultNode+"->dimType"+" = " + "jNode0.rightOutputAttrType[0];"
 
             if CODETYPE == 1:
                 print >>fo, "\t\t\tclFinish(context.queue);"
@@ -2602,7 +2632,6 @@ def generate_code(tree):
             for i in range(0,selectLen):
                 exp = select_list[i]
                 if isinstance(exp, ystree.YFuncExp):
-    
                     print >>fo, "\tgbNode->tupleSize += sizeof(float);"
                     print >>fo, "\tgbNode->attrType[" + str(i) + "] = FLOAT;"
                     print >>fo, "\tgbNode->attrSize[" + str(i) + "] = sizeof(float);"
@@ -2611,7 +2640,11 @@ def generate_code(tree):
                     mathFunc = mathExp()
                     mathFunc.addOp(para)
                     prefix = "\tgbNode->gbExp[" + str(i) + "].exp"
-                    printMathFunc(fo,prefix, mathFunc)
+                    #to_ctype(lAttrList[j].type) 
+                    lAttrList = joinAttr.outAttr[0][0]
+                    rAttrList = joinAttr.outAttr[0][1]
+                    #print >>fo, "\tjoinAttr: " + to_ctype(lAttrList[0].type)
+                    printMathFunc2(fo,prefix, mathFunc, joinAttr.outAttr[0])
     
                 elif isinstance(exp, ystree.YRawColExp):
                     colIndex = exp.column_name

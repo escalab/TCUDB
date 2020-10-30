@@ -1202,7 +1202,7 @@ struct tableNode * hashJoin(struct joinNode *jNode, struct statistic *pp){
         res->attrTotalSize[i] = resSize;
         res->dataFormat[i] = UNCOMPRESSED;
         if(res->dataPos[i] == MEM){
-            printf("res->dataPos in MEM\n");
+            //printf("res->dataPos in MEM\n");
             res->content[i] = (char *) malloc(resSize);
             memset(res->content[i],0,resSize);
             // Copy result back to host
@@ -1211,7 +1211,7 @@ struct tableNode * hashJoin(struct joinNode *jNode, struct statistic *pp){
 
         }else if(res->dataPos[i] == GPU){
             res->content[i] = gpu_result;
-            printf("res->dataPos[%d] in GPU, with resSize: %d\n", i, resSize);
+            //printf("res->dataPos[%d] in GPU, with resSize: %d\n", i, resSize);
             char * tmp = (char *)malloc(resSize);
             //float * tmp = (float *)malloc(resSize);
             //int * tmp = (int *)malloc(resSize);

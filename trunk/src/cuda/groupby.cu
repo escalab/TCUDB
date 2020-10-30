@@ -108,7 +108,6 @@ __device__ static float calMathExp(char **content, struct mathExp exp, int pos){
             int index = exp.opValue;
             int type  = exp.dataType;
             //cuPrintf("pos for content: %d\n", pos); // 0-15
-            //FIXME: if the data is INT type, change here
             if (type == INT) {
                 res = ((int *)(content[index]))[pos];
             } else { // type == FLOAT
@@ -131,7 +130,7 @@ __device__ static float calMathExp(char **content, struct mathExp exp, int pos){
     }else if (exp.op == DIVIDE){
         float left = calMathExp(content, ((struct mathExp*)exp.exp)[0],pos);
         float right = calMathExp(content, ((struct mathExp*)exp.exp)[1], pos);
-        cuPrintf("left: %f\tright: %.0f\n", left, right);
+        //cuPrintf("left: %f\tright: %.0f\n", left, right);
         res = left / right;
         //res = calMathExp(content, ((struct mathExp*)exp.exp)[0],pos) / calMathExp(content, ((struct mathExp*)exp.exp)[1], pos);
     }
@@ -143,7 +142,7 @@ __device__ static float calMathExp(char **content, struct mathExp exp, int pos){
  * group by constant. Currently only support SUM function.
  */
 
-__global__ static void agg_cal_cons(char ** content, int colNum, struct groupByExp* exp, long tupleNum, char ** result){
+__global__ static void agg_cal_cons(char ** content, int colNum, struct groupByExp* exp, long tupleNum, char ** result, float *gpuPageRank){
 
     int stride = blockDim.x * gridDim.x;
     int index = blockIdx.x * blockDim.x + threadIdx.x;
@@ -160,7 +159,9 @@ __global__ static void agg_cal_cons(char ** content, int colNum, struct groupByE
             if (func == SUM){
                 //cuPrintf("opNum: %d\n", exp[j].exp.opNum);//2
                 float tmpRes = calMathExp(content, exp[j].exp, i);
-                cuPrintf("%.8f\n", tmpRes);
+                //FIXME: for fair comparison, store into output array
+                gpuPageRank[i] = tmpRes;
+                //cuPrintf("%.8f\n", tmpRes);
                 buf[j] += tmpRes;
             }else if (func == AVG){
 
@@ -242,12 +243,14 @@ struct tableNode * groupBy(struct groupByNode * gb, struct statistic * pp){
     cudaPrintfInit();
 
     struct timespec start,end;
+    struct timespec cudaMemcpy_start,cudaMemcpy_end;
     clock_gettime(CLOCK_REALTIME,&start);
     int *gpuGbIndex = NULL, gpuTupleNum, gpuGbColNum;
     int *gpuGbType = NULL, *gpuGbSize = NULL;
 
     int *gpuGbKey = NULL;
     char ** gpuContent = NULL, **column = NULL;
+    float *gpuPageRank;
 
     /*
      * @gbCount: the number of groups
@@ -257,8 +260,8 @@ struct tableNode * groupBy(struct groupByNode * gb, struct statistic * pp){
     int gbCount;
     int gbConstant = 0;
 
-    printf("factType: %d\n", gb->table->factType);
-    printf("dimType: %d\n", gb->table->dimType);
+    //printf("factType: %d\n", gb->table->factType);
+    //printf("dimType: %d\n", gb->table->dimType);
     struct tableNode *res = (struct tableNode *) malloc(sizeof(struct tableNode));
     CHECK_POINTER(res);
     res->tupleSize = gb->tupleSize;
@@ -284,6 +287,7 @@ struct tableNode * groupBy(struct groupByNode * gb, struct statistic * pp){
     
     gpuTupleNum = gb->table->tupleNum;
     gpuGbColNum = gb->groupByColNum;
+    CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void **)&gpuPageRank, gpuTupleNum * sizeof(float *)));
     /*
     float * tmp = (float *)malloc(64);
     CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(tmp,gb->table->content[0],64,cudaMemcpyDeviceToHost));
@@ -323,7 +327,6 @@ struct tableNode * groupBy(struct groupByNode * gb, struct statistic * pp){
 
             CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(&gpuContent[i], &column[i], sizeof(char *), cudaMemcpyHostToDevice));
         }else{
-            // FIXME: didn't copy the correct data?
             CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(&gpuContent[i], &gb->table->content[i], sizeof(char *), cudaMemcpyHostToDevice));
         }
     }
@@ -436,12 +439,24 @@ struct tableNode * groupBy(struct groupByNode * gb, struct statistic * pp){
         CUDA_SAFE_CALL_NO_SYNC(cudaFree(gpu_psum));
         CUDA_SAFE_CALL_NO_SYNC(cudaFree(gpu_groupNum));
     }else // query has no group by keyword
-        agg_cal_cons<<<grid,block>>>(gpuContent, gpuGbColNum, gpuGbExp, gpuTupleNum,gpuResult);
+        agg_cal_cons<<<grid,block>>>(gpuContent, gpuGbColNum, gpuGbExp, gpuTupleNum,gpuResult, gpuPageRank);
 
     // verify result on host
+    float *h_pageRank = (float *)malloc(gpuTupleNum*sizeof(float));
+    clock_gettime(CLOCK_REALTIME,&cudaMemcpy_start);
+    CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(h_pageRank, gpuPageRank, gpuTupleNum*sizeof(float),cudaMemcpyDeviceToHost));
+    clock_gettime(CLOCK_REALTIME,&cudaMemcpy_end);
+    /*
+    for (int k = 0; k < gpuTupleNum; k++) {
+        printf("PageRank[%d]: %.10f\n", k, h_pageRank[k]);
+    }
+    */
+
+    /*
     float *h_res = (float *)malloc(sizeof(float));
     CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(h_res, result[0], sizeof(float),cudaMemcpyDeviceToHost));
     printf("host res: %f\n", h_res[0]);
+    */ 
 
     for(int i=0; i<gb->table->totalAttr;i++){
         if(gb->table->dataPos[i]==MEM)
@@ -457,7 +472,9 @@ struct tableNode * groupBy(struct groupByNode * gb, struct statistic * pp){
 
     clock_gettime(CLOCK_REALTIME,&end);
     double timeE = (end.tv_sec -  start.tv_sec)* BILLION + end.tv_nsec - start.tv_nsec;
+    double cudaMemcpytime = (cudaMemcpy_end.tv_sec -  cudaMemcpy_start.tv_sec)* BILLION + cudaMemcpy_end.tv_nsec - cudaMemcpy_start.tv_nsec;
     printf("GroupBy Time: %lf\n", timeE/(1000*1000));
+    printf("cudaMemcpy Time: %lf\n", cudaMemcpytime/(1000*1000));
 
     cudaPrintfDisplay(stdout, true);
     cudaPrintfEnd();

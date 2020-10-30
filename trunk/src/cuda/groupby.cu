@@ -23,8 +23,8 @@
 #include "../include/gpuCudaLib.h"
 #include "../include/cudaHash.h"
 #include "scanImpl.cu"
-//#include "../include/cuPrintf.cu"
-//#include "../include/cuPrintf.cuh"
+#include "../include/cuPrintf.cu"
+#include "../include/cuPrintf.cuh"
 
 /*
 #define ERROR_CHECK(ans) { gpuAssert((ans), __FILE__, __LINE__); }
@@ -97,8 +97,7 @@ __global__ static void count_group_num(int *num, int tupleNum, int *totalCount){
  */
 
 __device__ static float calMathExp(char **content, struct mathExp exp, int pos){
-    float res ;
-    //cuPrintf("index: %d\tpos: %d\tcontent: %d\n", exp.opValue, pos, ((int *)(content[exp.opValue]))[pos]);
+    float res;
 
     // terminate condition
     if(exp.op == NOOP){
@@ -107,7 +106,16 @@ __device__ static float calMathExp(char **content, struct mathExp exp, int pos){
             res = exp.opValue;
         else{
             int index = exp.opValue;
-            res = ((int *)(content[index]))[pos];
+            int type  = exp.dataType;
+            //cuPrintf("pos for content: %d\n", pos); // 0-15
+            //FIXME: if the data is INT type, change here
+            if (type == INT) {
+                res = ((int *)(content[index]))[pos];
+            } else { // type == FLOAT
+                res = ((float *)(content[index]))[pos];
+            }
+            //res = ((int *)(content[index]))[pos];
+            //res = ((float *)(content[index]))[pos];
         }
     
     }else if(exp.op == PLUS ){
@@ -118,12 +126,14 @@ __device__ static float calMathExp(char **content, struct mathExp exp, int pos){
 
     }else if (exp.op == MULTIPLY){
         // NOTE: here only perform multiply, so duplicates may happen
-        //cuPrintf("left val: %.0f\t\tright val: %.0f\n", calMathExp(content, ((struct mathExp*)exp.exp)[0],pos), calMathExp(content, ((struct mathExp*)exp.exp)[1],pos));
         res = calMathExp(content, ((struct mathExp*)exp.exp)[0],pos) * calMathExp(content, ((struct mathExp*)exp.exp)[1], pos);
-        //cuPrintf("result: %.0f\n", res);
 
     }else if (exp.op == DIVIDE){
-        res = calMathExp(content, ((struct mathExp*)exp.exp)[0],pos) / calMathExp(content, ((struct mathExp*)exp.exp)[1], pos);
+        float left = calMathExp(content, ((struct mathExp*)exp.exp)[0],pos);
+        float right = calMathExp(content, ((struct mathExp*)exp.exp)[1], pos);
+        cuPrintf("left: %f\tright: %.0f\n", left, right);
+        res = left / right;
+        //res = calMathExp(content, ((struct mathExp*)exp.exp)[0],pos) / calMathExp(content, ((struct mathExp*)exp.exp)[1], pos);
     }
 
     return res;
@@ -143,13 +153,14 @@ __global__ static void agg_cal_cons(char ** content, int colNum, struct groupByE
         buf[i] = 0;
 
     // peform computation on all matched tuples
-    //printf("tupleNum: %d\n", tupleNum); // 119142
-    //printf("colNum: %d\n", colNum);  // 1
+    //cuPrintf("tupleNum: %d\n", tupleNum); // 16
     for(int i=index;i<tupleNum;i+=stride){
-        for(int j=0;j<colNum;j++){
+        for(int j=0;j<colNum;j++){ //j is 0
             int func = exp[j].func;
             if (func == SUM){
+                //cuPrintf("opNum: %d\n", exp[j].exp.opNum);//2
                 float tmpRes = calMathExp(content, exp[j].exp, i);
+                cuPrintf("%.8f\n", tmpRes);
                 buf[j] += tmpRes;
             }else if (func == AVG){
 
@@ -228,7 +239,7 @@ __global__ static void agg_cal(char ** content, int colNum, struct groupByExp* e
 
 struct tableNode * groupBy(struct groupByNode * gb, struct statistic * pp){
 
-    //cudaPrintfInit();
+    cudaPrintfInit();
 
     struct timespec start,end;
     clock_gettime(CLOCK_REALTIME,&start);
@@ -246,6 +257,8 @@ struct tableNode * groupBy(struct groupByNode * gb, struct statistic * pp){
     int gbCount;
     int gbConstant = 0;
 
+    printf("factType: %d\n", gb->table->factType);
+    printf("dimType: %d\n", gb->table->dimType);
     struct tableNode *res = (struct tableNode *) malloc(sizeof(struct tableNode));
     CHECK_POINTER(res);
     res->tupleSize = gb->tupleSize;
@@ -271,16 +284,25 @@ struct tableNode * groupBy(struct groupByNode * gb, struct statistic * pp){
     
     gpuTupleNum = gb->table->tupleNum;
     gpuGbColNum = gb->groupByColNum;
+    /*
+    float * tmp = (float *)malloc(64);
+    CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(tmp,gb->table->content[0],64,cudaMemcpyDeviceToHost));
+    for (int k = 0; k < 16; k++) {
+        printf("tmp content: %f\n", tmp[k]);
+    }
+    free(tmp);
+    */
+
     //printf("gpuGbColNum: %d\n", gb->groupByColNum);
 
     // groupByIndex == -1 means query doesn't contain group by keyword
     if(gpuGbColNum == 1 && gb->groupByIndex[0] == -1){
-        //printf("HELLO OTTO\n");
         gbConstant = 1;
     }
 
 
     dim3 grid(1024);
+    //dim3 grid(512);
     dim3 block(128);
     int blockNum = gb->table->tupleNum / block.x + 1;
     if(blockNum < 1024)
@@ -301,6 +323,7 @@ struct tableNode * groupBy(struct groupByNode * gb, struct statistic * pp){
 
             CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(&gpuContent[i], &column[i], sizeof(char *), cudaMemcpyHostToDevice));
         }else{
+            // FIXME: didn't copy the correct data?
             CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(&gpuContent[i], &gb->table->content[i], sizeof(char *), cudaMemcpyHostToDevice));
         }
     }
@@ -360,7 +383,7 @@ struct tableNode * groupBy(struct groupByNode * gb, struct statistic * pp){
     char ** gpuResult = NULL;
     char ** result = NULL;
     
-    result = (char **)malloc(sizeof(char*)*res->totalAttr);
+    result = (char **)malloc(sizeof(char*)*res->totalAttr); // host stores data address on GPU
     CHECK_POINTER(result);
     CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&gpuResult, sizeof(char *)* res->totalAttr));
 
@@ -396,32 +419,48 @@ struct tableNode * groupBy(struct groupByNode * gb, struct statistic * pp){
     gpuGbColNum = res->totalAttr; // not sure why update second times
     //printf("2 gpuGbColNum: %d\n", res->totalAttr);
 
+    //verify gpuContent
+    /*
+    float * tmp2 = (float *)malloc(64);
+    CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(tmp2,gb->table->content[0],64,cudaMemcpyDeviceToHost));
+    for (int k = 0; k < 16; k++) {
+        printf("tmp2 content: %f\n", tmp2[k]);
+    }
+    free(tmp2);
+    */
+
     if(gbConstant !=1){ // query has group by keyword
         agg_cal<<<grid,block>>>(gpuContent, gpuGbColNum, gpuGbExp, gpuGbType, gpuGbSize, gpuTupleNum, gpuGbKey, gpu_psum, gpu_groupNum,gpuResult);
 
-        //CUDA_SAFE_CALL_NO_SYNC(cudaFree(gpuGbKey));
-        //CUDA_SAFE_CALL_NO_SYNC(cudaFree(gpu_psum));
-        //CUDA_SAFE_CALL_NO_SYNC(cudaFree(gpu_groupNum));
+        CUDA_SAFE_CALL_NO_SYNC(cudaFree(gpuGbKey));
+        CUDA_SAFE_CALL_NO_SYNC(cudaFree(gpu_psum));
+        CUDA_SAFE_CALL_NO_SYNC(cudaFree(gpu_groupNum));
     }else // query has no group by keyword
         agg_cal_cons<<<grid,block>>>(gpuContent, gpuGbColNum, gpuGbExp, gpuTupleNum,gpuResult);
+
+    // verify result on host
+    float *h_res = (float *)malloc(sizeof(float));
+    CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(h_res, result[0], sizeof(float),cudaMemcpyDeviceToHost));
+    printf("host res: %f\n", h_res[0]);
 
     for(int i=0; i<gb->table->totalAttr;i++){
         if(gb->table->dataPos[i]==MEM)
             CUDA_SAFE_CALL_NO_SYNC(cudaFree(column[i]));
     }
+    
     free(column);
-    //CUDA_SAFE_CALL_NO_SYNC(cudaFree(gpuContent));
-    //CUDA_SAFE_CALL_NO_SYNC(cudaFree(gpuGbType));
-    //CUDA_SAFE_CALL_NO_SYNC(cudaFree(gpuGbSize));
-    //CUDA_SAFE_CALL_NO_SYNC(cudaFree(gpuGbExp));
-    //CUDA_SAFE_CALL_NO_SYNC(cudaFree(gpuResult));
+    CUDA_SAFE_CALL_NO_SYNC(cudaFree(gpuContent));
+    CUDA_SAFE_CALL_NO_SYNC(cudaFree(gpuGbType));
+    CUDA_SAFE_CALL_NO_SYNC(cudaFree(gpuGbSize));
+    CUDA_SAFE_CALL_NO_SYNC(cudaFree(gpuGbExp));
+    CUDA_SAFE_CALL_NO_SYNC(cudaFree(gpuResult));
 
     clock_gettime(CLOCK_REALTIME,&end);
     double timeE = (end.tv_sec -  start.tv_sec)* BILLION + end.tv_nsec - start.tv_nsec;
     printf("GroupBy Time: %lf\n", timeE/(1000*1000));
 
-    //cudaPrintfDisplay(stdout, true);
-    //cudaPrintfEnd();
+    cudaPrintfDisplay(stdout, true);
+    cudaPrintfEnd();
 
     return res;
 }

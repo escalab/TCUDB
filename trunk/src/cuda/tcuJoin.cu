@@ -35,8 +35,8 @@
 #include <cublas_v2.h>
 #include <math.h>
 //#ifdef DEBUG
-#include "../include/cuPrintf.cu"
-#include "../include/cuPrintf.cuh"
+//#include "../include/cuPrintf.cu"
+//#include "../include/cuPrintf.cuh"
 //#endif
 
 using namespace nvcuda;
@@ -261,7 +261,8 @@ __global__ static void count_op(float *red_sum, int length) {
 
     if (i > length) return;
     if (red_sum[i] != 0)
-        cuPrintf("Node ID: %d\tDegree: %.0f\n", i, red_sum[i]);
+        return;
+        //cuPrintf("Node ID: %d\tDegree: %.0f\n", i, red_sum[i]);
 
 }
 
@@ -879,9 +880,10 @@ __host__ void static micro_mm(struct joinNode *jNode, float * matrix1, float * m
 __global__ void static verify_gpuResult(half * matrix, int width) {
     int i;
     for (i = 0; i < width*width; i++) {
-        cuPrintf("%.1f\t", __half2float(matrix[i]));
+        //cuPrintf("%.1f\t", __half2float(matrix[i]));
         if ((i+1) % width == 0)
-          cuPrintf("\n");  
+            return;
+          //cuPrintf("\n");  
     }
 
 }
@@ -1172,7 +1174,7 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
     */
 
 //#ifdef DEBUG
-    cudaPrintfInit();
+    //cudaPrintfInit();
 //#endif
     struct timespec tcu_start, tcu_end;
     struct timespec init_start, init_end;
@@ -2011,8 +2013,8 @@ if (gb && gb->gbExp[1].func == COUNT) {
     printf("Result verification: %lf(ms)\n", tmp_elapse/(1000*1000));
 #endif
 //#ifdef DEBUG
-    cudaPrintfDisplay(stdout, true);
-    cudaPrintfEnd();
+    //cudaPrintfDisplay(stdout, true);
+    //cudaPrintfEnd();
 //#endif
     return res; // FIXME: return res table if second join need this as input  
 

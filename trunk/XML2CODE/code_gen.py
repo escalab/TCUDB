@@ -2640,11 +2640,15 @@ def generate_code(tree):
                     mathFunc = mathExp()
                     mathFunc.addOp(para)
                     prefix = "\tgbNode->gbExp[" + str(i) + "].exp"
-                    #to_ctype(lAttrList[j].type) 
-                    lAttrList = joinAttr.outAttr[0][0]
-                    rAttrList = joinAttr.outAttr[0][1]
+                    #to_ctype(lAttrList[j].type)
+                    #print >> fo, "\tlen "+str(hasattr(joinAttr.outAttr[0][0], 'type'))
+                    if hasattr(joinAttr.outAttr[0][0], 'type'):
+                        lAttrList = joinAttr.outAttr[0][0]
+                        rAttrList = joinAttr.outAttr[0][1]
                     #print >>fo, "\tjoinAttr: " + to_ctype(lAttrList[0].type)
-                    printMathFunc2(fo,prefix, mathFunc, joinAttr.outAttr[0])
+                        printMathFunc2(fo,prefix, mathFunc, joinAttr.outAttr[0])
+                    else:
+                        printMathFunc(fo,prefix, mathFunc)
     
                 elif isinstance(exp, ystree.YRawColExp):
                     colIndex = exp.column_name

@@ -1664,7 +1664,8 @@ clock_gettime(CLOCK_REALTIME, &maskRED_end);
                 d_fp16_A, CUDA_R_16F, MATRIX_K,
                 &beta,
                 c_cublas, CUDA_R_32F, MATRIX_N,
-                CUDA_R_32F, CUBLAS_GEMM_DFALT_TENSOR_OP)); // tcu
+                //CUDA_R_32F, CUBLAS_GEMM_DFALT_TENSOR_OP)); // tcu
+                CUBLAS_COMPUTE_32F, CUBLAS_GEMM_DEFAULT_TENSOR_OP)); // CUDA 11
 #else
     // NOTE: YDB's groupby is not group by clause but aggregate function
     // outdegree.sql, gb->gbExp[0].func == DESC
@@ -1676,7 +1677,8 @@ clock_gettime(CLOCK_REALTIME, &maskRED_end);
                 d_fp16_A, CUDA_R_16F, MATRIX_K,
                 &beta,
                 c_cublas, CUDA_R_32F, MATRIX_N,
-                CUDA_R_32F, CUBLAS_GEMM_DFALT_TENSOR_OP)); // tcu
+                //CUDA_R_32F, CUBLAS_GEMM_DFALT_TENSOR_OP)); // tcu
+                CUBLAS_COMPUTE_32F, CUBLAS_GEMM_DEFAULT_TENSOR_OP)); // CUDA 11
 
         clock_gettime(CLOCK_REALTIME, &gbCount_start);
         cublasErrCheck(cublasGemmEx(cublasHandle, CUBLAS_OP_N, CUBLAS_OP_N,
@@ -1686,7 +1688,8 @@ clock_gettime(CLOCK_REALTIME, &maskRED_end);
                 c_cublas, CUDA_R_32F, MATRIX_N,
                 &beta,
                 red_sum, CUDA_R_32F, 1,
-                CUDA_R_32F, CUBLAS_GEMM_DFALT_TENSOR_OP)); // tcu
+                //CUDA_R_32F, CUBLAS_GEMM_DFALT_TENSOR_OP)); // tcu
+                CUBLAS_COMPUTE_32F, CUBLAS_GEMM_DEFAULT_TENSOR_OP)); // CUDA 11
 
         
         // implements COUNT operation -- print node.id with outdegree cnt
@@ -1716,7 +1719,8 @@ clock_gettime(CLOCK_REALTIME, &maskRED_end);
                 d_fp16_A, CUDA_R_16F, MATRIX_K,
                 &beta,
                 c_cublas, CUDA_R_32F, MATRIX_N,
-                CUDA_R_32F, CUBLAS_GEMM_DFALT_TENSOR_OP)); // tcu
+                //CUDA_R_32F, CUBLAS_GEMM_DFALT_TENSOR_OP)); // tcu
+                CUBLAS_COMPUTE_32F, CUBLAS_GEMM_DEFAULT_TENSOR_OP)); // CUDA 11
 
         pageRankAdd<<< (MATRIX_M * MATRIX_N + 255) / 256, 256 >>> (c_cublas, MATRIX_M*MATRIX_N, pageRankAlpha, MATRIX_K);
         // verify result
@@ -1751,7 +1755,8 @@ clock_gettime(CLOCK_REALTIME, &maskRED_end);
                 c_cublas, CUDA_R_32F, MATRIX_N,
                 &beta,
                 red_sum, CUDA_R_32F, 1,
-                CUDA_R_32F, CUBLAS_GEMM_DFALT_TENSOR_OP)); // tcu
+                //CUDA_R_32F, CUBLAS_GEMM_DFALT_TENSOR_OP)); // tcu
+                CUBLAS_COMPUTE_32F, CUBLAS_GEMM_DEFAULT_TENSOR_OP)); // CUDA 11
 
     // return groupBy count
     if (gb && gb->gbExp[1].func == COUNT) {
@@ -1767,7 +1772,8 @@ clock_gettime(CLOCK_REALTIME, &maskRED_end);
                 d_red2, CUDA_R_32F, MATRIX_M,
                 &beta,
                 red_sum2, CUDA_R_32F, 1,
-                CUDA_R_32F, CUBLAS_GEMM_DFALT_TENSOR_OP)); // tcu
+                //CUDA_R_32F, CUBLAS_GEMM_DFALT_TENSOR_OP)); // tcu
+                CUBLAS_COMPUTE_32F, CUBLAS_GEMM_DEFAULT_TENSOR_OP)); // CUDA 11
     clock_gettime(CLOCK_REALTIME, &gbCount_end);
     
 #endif

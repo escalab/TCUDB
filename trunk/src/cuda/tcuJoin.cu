@@ -321,6 +321,18 @@ __global__ void static microbenchmark(char *column_idx, char *column_val, int ma
     mat[i*matWidth + (*colIndex)] = __int2half_rn(*val);
 }
 
+__global__ void static microbenchmark_new(char *column_idx, char *column_val, int matWidth, half *mat, size_t tupleNum, int attrType) {
+    int i = blockDim.x * blockIdx.x + threadIdx.x;
+
+    if (i >= tupleNum) return;
+
+    int index = i * attrType;
+    int *colIndex   = (int*)&column_idx[index];
+    int *val        = (int*)&column_val[index];
+    //printf("idx: %d\tval: %d\n", i*matWidth + (*colIndex), (*val));
+    mat[i] = __int2half_rn(*val);
+}
+
 __global__ void static gpu_fill_mm(char *column_idx, char *column_val, int matWidth, float *mat, size_t tupleNum, int attrType) {
     int i = blockDim.x * blockIdx.x + threadIdx.x;
 
@@ -351,7 +363,7 @@ __host__ void static verify_test(half *matrix, int height, int width) {
 __host__ void static verify_result(float * matrix, int height, int width) {
     int i;
     for (i = 0; i < height*width; i++) {
-        printf("%.8f\t", matrix[i]);
+        printf("%.2f\t", matrix[i]);
         if ((i+1) % width == 0)
             printf("\n\n");  
     }
@@ -1221,11 +1233,24 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
     MATRIX_M = (uint64_t)nearestMultipleN(leftTupleNum, 16);
     MATRIX_N = (uint64_t)nearestMultipleN(rightTupleNum, 16);
 #else
+    
+    MATRIX_K = *matrix_dim; // user input, matrix width (if WMMA, multiple of 16)
+#ifdef MICRO
+#else
     MATRIX_M = (uint64_t)leftTupleNum;
     MATRIX_N = (uint64_t)rightTupleNum;
+#endif // end of MICRO
+    // square matrix M=N=K
+    MATRIX_M = MATRIX_K;
+    MATRIX_N = MATRIX_K;
 #endif
-    MATRIX_K = *matrix_dim; // user input, matrix width (if WMMA, multiple of 16)
+    //MATRIX_K = *matrix_dim; // user input, matrix width (if WMMA, multiple of 16)
 
+    printf("left  tuple #: %d\n", leftTupleNum);
+    printf("right tuple #: %d\n", rightTupleNum);
+    printf("MATRIX_M: %lu\n", MATRIX_M);
+    printf("MATRIX_N: %lu\n", MATRIX_N);
+    printf("MATRIX_K: %lu\n", MATRIX_K);
 #ifdef DEBUG
 
 #ifdef PAGERANK
@@ -1287,6 +1312,7 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
     clock_gettime(CLOCK_REALTIME, &debug_end);
     // enable tensor core
     cublasErrCheck(cublasSetMathMode(cublasHandle, CUBLAS_TENSOR_OP_MATH));
+    //cublasErrCheck(cublasSetMathMode(cublasHandle,CUBLAS_DEFAULT_MATH));
 
 #ifdef BEER
     /* Beer dataset */
@@ -1524,14 +1550,16 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
     clock_gettime(CLOCK_REALTIME, &cuMemcpy_end);
 
     clock_gettime(CLOCK_REALTIME, &fill_start); 
-    microbenchmark<<<(MAX_THREADS+A_tupleNum-1)/MAX_THREADS,MAX_THREADS>>> (gpu_fact,
+    //microbenchmark<<<(MAX_THREADS+A_tupleNum-1)/MAX_THREADS,MAX_THREADS>>> (gpu_fact,
+    microbenchmark_new<<<(MAX_THREADS+A_tupleNum-1)/MAX_THREADS,MAX_THREADS>>> (gpu_fact,
             gpu_fact_val,
             MATRIX_K,
             d_fp16_A,
             A_tupleNum,
             jNode->leftTable->attrType[jNode->leftKeyIndex]);
     cudaErrCheck(cudaFree(gpu_fact));
-    microbenchmark<<<(MAX_THREADS+B_tupleNum-1)/MAX_THREADS,MAX_THREADS>>> (gpu_dim,
+    //microbenchmark<<<(MAX_THREADS+B_tupleNum-1)/MAX_THREADS,MAX_THREADS>>> (gpu_dim,
+    microbenchmark_new<<<(MAX_THREADS+B_tupleNum-1)/MAX_THREADS,MAX_THREADS>>> (gpu_dim,
             gpu_dim_val,
             MATRIX_K,
             d_fp16_B,
@@ -1695,10 +1723,11 @@ clock_gettime(CLOCK_REALTIME, &maskRED_end);
     //cudaErrCheck(cudaFree(d_fp32_mask2));
 #elif CUBLAS_HALF
     clock_gettime(CLOCK_REALTIME, &transpose_start);
-    gpu_transpose<<< (MATRIX_N * MATRIX_K + 255) / 256, 256 >>> (d_fp16_BT, d_fp16_B, MATRIX_N, MATRIX_K);
+    //printf("line 1726\n");
+    //gpu_transpose<<< (MATRIX_N * MATRIX_K + 255) / 256, 256 >>> (d_fp16_BT, d_fp16_B, MATRIX_N, MATRIX_K);
     clock_gettime(CLOCK_REALTIME, &transpose_end);
 
-    cudaErrCheck(cudaFree(d_fp16_B));
+    //cudaErrCheck(cudaFree(d_fp16_B));
 #elif CUBLAS
 
     /*
@@ -1757,7 +1786,8 @@ clock_gettime(CLOCK_REALTIME, &maskRED_end);
     cublasErrCheck(cublasGemmEx(cublasHandle, CUBLAS_OP_N, CUBLAS_OP_N,
                 MATRIX_N, MATRIX_M, MATRIX_K,
                 &alpha,
-                d_fp16_BT, CUDA_R_16F, MATRIX_N,
+                //d_fp16_BT, CUDA_R_16F, MATRIX_N,
+                d_fp16_B, CUDA_R_16F, MATRIX_N,
                 d_fp16_A, CUDA_R_16F, MATRIX_K,
                 &beta,
                 c_cublas, CUDA_R_32F, MATRIX_N,
@@ -2003,7 +2033,7 @@ clock_gettime(CLOCK_REALTIME, &maskRED_end);
     clock_gettime(CLOCK_REALTIME, &pagerankVerify_end);
     //verify_result(c_host_cublas, MATRIX_M, MATRIX_N);
 #elif MICRO
-
+    // only for verification
     cudaErrCheck(cudaMemcpy(c_host_cublas, c_cublas, sizeof(float)*MATRIX_M*MATRIX_N, cudaMemcpyDeviceToHost));
     verify_result(c_host_cublas,MATRIX_M, MATRIX_N);
 
@@ -2058,18 +2088,20 @@ clock_gettime(CLOCK_REALTIME, &maskRED_end);
 #elif CUBLAS
     float cublasTime;
 
-    cudaErrCheck(cudaMemcpy(c_host_sgemm, c_sgemm, sizeof(float)*MATRIX_M*MATRIX_N, cudaMemcpyDeviceToHost));
-    //verify_result(c_host_sgemm,MATRIX_M, MATRIX_N);
+//    cudaErrCheck(cudaMemcpy(c_host_sgemm, c_sgemm, sizeof(float)*MATRIX_M*MATRIX_N, cudaMemcpyDeviceToHost));
+//    verify_result(c_host_sgemm,MATRIX_M, MATRIX_N);
 
     cudaErrCheck(cudaEventSynchronize(stopcublas));
     cudaErrCheck(cudaEventElapsedTime(&cublasTime, startcublas, stopcublas));
     clock_gettime(CLOCK_REALTIME, &count_start);
+    /*
     cublasStatus_t sgemm_ret;
     sgemm_ret = cublasCreate(&cublasHandle_default);
     float *cbsgemm_res = (float*)malloc(sizeof(float));
     sgemm_ret = cublasSasum(cublasHandle_default, MATRIX_M*MATRIX_N, c_sgemm, 1, cbsgemm_res);
     clock_gettime(CLOCK_REALTIME, &count_end);
     printf("c_host_sgemm sum: %.0f\n", *cbsgemm_res);
+    */
     printf("cublas sgemm (FP32) took %fms\n", cublasTime);
 
     cudaErrCheck(cudaEventDestroy(startcublas));
@@ -2155,8 +2187,9 @@ if (gb && (gb->gbExp[1].func == COUNT || gb->gbExp[0].func == COUNT)) {
 #endif
 
 #elif CUBLAS
-    printf("cublasSGEMM sum counting: %lf(ms)\n", count_elapse/(1000*1000));
+    //printf("cublasSGEMM sum counting: %lf(ms)\n", count_elapse/(1000*1000));
     printf("cublasCreate cold start: %lf(ms)\n", debug_elapse/(1000*1000));
+    printf("gpu transpose: %lf(ms)\n", transpose_elapse/(1000*1000));
 #elif WMMA_HALF
     printf("Result verification: %lf(ms)\n", tmp_elapse/(1000*1000));
 #endif

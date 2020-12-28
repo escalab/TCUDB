@@ -333,6 +333,18 @@ __global__ void static microbenchmark_new(char *column_idx, char *column_val, in
     mat[i] = __int2half_rn(*val);
 }
 
+__global__ void static outdegree_fill(char *column_val, half *mat, size_t tupleNum, int attrType) {
+    int i = blockDim.x * blockIdx.x + threadIdx.x;
+
+    if (i >= tupleNum) return;
+
+    int index = i * attrType;
+    //int *colIndex   = (int*)&column_idx[index];
+    int *val        = (int*)&column_val[index];
+    //printf("idx: %d\tval: %d\n", i*matWidth + (*colIndex), (*val));
+    mat[(*val)] = __hadd(mat[(*val)], __int2half_rn(1));
+}
+
 __global__ void static gpu_fill_mm(char *column_idx, char *column_val, int matWidth, float *mat, size_t tupleNum, int attrType) {
     int i = blockDim.x * blockIdx.x + threadIdx.x;
 
@@ -1183,9 +1195,11 @@ __global__ void wmma_int(signed char *a, signed char *b, int *c, int M, int N, i
  *  A new table node
  */
 struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *matrix_dim, struct groupByNode *gb){
-    //printf("COUNT: %d\n", COUNT);
+    //printf("COUNT: %d\n", COUNT);//19
+    //printf("SUM: %d\n", SUM);//20
     float pageRankAlpha;
-    //printf("func: %d\n", gb->gbExp[0].func);
+    //printf("func: %d\n", gb->gbExp[0].func);//37
+    //printf("func: %d\n", gb->gbExp[1].func);//19
 #ifdef PAGERANK
     //printf("func: %d\n", gb->gbExp[0].func);
     //printf("PageRank constant: %.3f\n", ((struct mathExp *)((struct mathExp *) gb->gbExp[0].exp.exp)[0].exp)[0].consValue);
@@ -1213,6 +1227,7 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
 //#ifdef DEBUG
     //cudaPrintfInit();
 //#endif
+    struct timespec test_start, test_end;
     struct timespec tcu_start, tcu_end;
     struct timespec init_start, init_end;
     struct timespec fill_start, fill_end;
@@ -1236,21 +1251,22 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
     
     MATRIX_K = *matrix_dim; // user input, matrix width (if WMMA, multiple of 16)
 #ifdef MICRO
+    // square matrix M=N=K
+    MATRIX_M = MATRIX_K;
+    MATRIX_N = MATRIX_K;
 #else
     MATRIX_M = (uint64_t)leftTupleNum;
     MATRIX_N = (uint64_t)rightTupleNum;
 #endif // end of MICRO
-    // square matrix M=N=K
-    MATRIX_M = MATRIX_K;
-    MATRIX_N = MATRIX_K;
 #endif
     //MATRIX_K = *matrix_dim; // user input, matrix width (if WMMA, multiple of 16)
-
+/*
     printf("left  tuple #: %d\n", leftTupleNum);
     printf("right tuple #: %d\n", rightTupleNum);
     printf("MATRIX_M: %lu\n", MATRIX_M);
     printf("MATRIX_N: %lu\n", MATRIX_N);
     printf("MATRIX_K: %lu\n", MATRIX_K);
+*/
 #ifdef DEBUG
 
 #ifdef PAGERANK
@@ -1416,11 +1432,29 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
     CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&factVal,foreignKeySize));
     CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&dimVal,primaryKeySize));
 #endif
+
+#ifdef OUTDEGREE
+    // create square matrix for PageRank Q1 output
+    // any row in the resulting matrix is the answer
+    // B mat filling by counting src node
+    c_host_cublas = (float*)calloc(MATRIX_M*MATRIX_M, sizeof(float));
+    CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&c_cublas, (uint64_t)MATRIX_M * (uint64_t)MATRIX_M * sizeof(float)));
+    //TODO: not sure if need to transpose B mat
+    CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&d_fp16_A, (uint64_t)MATRIX_M * 1 * sizeof(half)));
+    CUDA_SAFE_CALL_NO_SYNC(cudaMemset(d_fp16_A, 1, (uint64_t)MATRIX_M * 1 * sizeof(half)));
+    // same dimension as A mat
+    CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&d_fp16_B, (uint64_t)MATRIX_M * 1 * sizeof(half)));
+    CUDA_SAFE_CALL_NO_SYNC(cudaMemset(d_fp16_B, 0, (uint64_t)MATRIX_M * 1 * sizeof(half)));
+    CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&gpu_fact_val,foreignKeySize));
+    CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&gpu_dim_val,primaryKeySize));
+
+#else
     c_host_cublas = (float*)calloc(MATRIX_M*MATRIX_N, sizeof(float));
     CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&c_cublas, (uint64_t)MATRIX_M * (uint64_t)MATRIX_N * sizeof(float)));
     CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&d_fp16_A, (uint64_t)MATRIX_M * (uint64_t)MATRIX_K * sizeof(half)));
     CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&d_fp16_B, (uint64_t)MATRIX_N * (uint64_t)MATRIX_K * sizeof(half)));
     CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&d_fp16_BT, (uint64_t)MATRIX_K * (uint64_t)MATRIX_N * sizeof(half)));
+#endif // end of OUTDEGREE
 
 #ifdef BEER
     /* Beer dataset if require further projection */
@@ -1568,6 +1602,28 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
     cudaErrCheck(cudaFree(gpu_dim));
 
     clock_gettime(CLOCK_REALTIME, &fill_end); 
+#elif OUTDEGREE
+    int A_tupleNum = jNode->leftTable->tupleNum;
+    int B_tupleNum = jNode->rightTable->tupleNum;
+    clock_gettime(CLOCK_REALTIME, &cuMemcpy_start);
+
+    //CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(gpu_fact,jNode->leftTable->content[jNode->leftKeyIndex], foreignKeySize,cudaMemcpyHostToDevice));
+    //CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(gpu_dim,jNode->rightTable->content[jNode->rightKeyIndex], primaryKeySize,cudaMemcpyHostToDevice));
+    CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(gpu_fact_val,jNode->leftTable->content[1], foreignKeySize,cudaMemcpyHostToDevice));
+    CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(gpu_dim_val,jNode->rightTable->content[1], primaryKeySize,cudaMemcpyHostToDevice));
+
+    clock_gettime(CLOCK_REALTIME, &cuMemcpy_end);
+    outdegree_fill<<<(MAX_THREADS+B_tupleNum-1)/MAX_THREADS,MAX_THREADS>>> (gpu_dim_val,
+            d_fp16_B,
+            B_tupleNum,
+            jNode->rightTable->attrType[jNode->rightKeyIndex]);
+
+    clock_gettime(CLOCK_REALTIME, &fill_start); 
+
+
+    clock_gettime(CLOCK_REALTIME, &fill_end); 
+// end of OUTDEGREE to cudaMemcpy and filling matrix
+
 #else // matrix-multiplication join count
     //tcu_match(jNode, MATRIX_K, h_short_A, h_short_B, jNode->leftTable->attrType[0], jNode->rightTable->attrType[0]);
     int A_tupleNum = jNode->leftTable->tupleNum;
@@ -1577,6 +1633,7 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
     clock_gettime(CLOCK_REALTIME, &cuMemcpy_start);
     CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(gpu_fact,jNode->leftTable->content[jNode->leftKeyIndex], foreignKeySize,cudaMemcpyHostToDevice));
     CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(gpu_dim,jNode->rightTable->content[jNode->rightKeyIndex], primaryKeySize,cudaMemcpyHostToDevice));
+    clock_gettime(CLOCK_REALTIME, &cuMemcpy_end);
 
 #ifdef PAGERANK  // pagerank requires additional float value instead of filling 0/1
     int factCol = jNode->leftOutputIndex[jNode->leftOutputAttrNum-1];
@@ -1628,7 +1685,7 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
             d_fp16_B,
             B_tupleNum,
             jNode->rightTable->attrType[jNode->rightKeyIndex]);
-    cudaErrCheck(cudaFree(gpu_dim));
+//    cudaErrCheck(cudaFree(gpu_dim));
 #endif
     clock_gettime(CLOCK_REALTIME, &fill_end); 
 #endif // end of fill matrix start at L1450
@@ -1689,7 +1746,7 @@ clock_gettime(CLOCK_REALTIME, &maskRED_start);
 #else
 
     setVector(h_red, MATRIX_N);
-    CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(d_red, h_red, sizeof(float) * MATRIX_N, cudaMemcpyHostToDevice));
+//    CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(d_red, h_red, sizeof(float) * MATRIX_N, cudaMemcpyHostToDevice));
 #ifdef RED
     setVector(h_red2, MATRIX_M);
     CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(d_red2, h_red2, sizeof(float) * MATRIX_M, cudaMemcpyHostToDevice));
@@ -1722,10 +1779,14 @@ clock_gettime(CLOCK_REALTIME, &maskRED_end);
     //convertFp32ToFp16<<< (MATRIX_N * MATRIX_K + 255) / 256, 256 >>> (d_fp16_mask2, d_fp32_mask2, MATRIX_M * MATRIX_N);
     //cudaErrCheck(cudaFree(d_fp32_mask2));
 #elif CUBLAS_HALF
+
+#ifdef OUTDEGREE
+#else    
     clock_gettime(CLOCK_REALTIME, &transpose_start);
-    //printf("line 1726\n");
-    //gpu_transpose<<< (MATRIX_N * MATRIX_K + 255) / 256, 256 >>> (d_fp16_BT, d_fp16_B, MATRIX_N, MATRIX_K);
+    // FIXME: microbenchmark doesn't need to transpose
+    gpu_transpose<<< (MATRIX_N * MATRIX_K + 255) / 256, 256 >>> (d_fp16_BT, d_fp16_B, MATRIX_N, MATRIX_K);
     clock_gettime(CLOCK_REALTIME, &transpose_end);
+#endif // end of OUTDEGREE -- transpose B mat
 
     //cudaErrCheck(cudaFree(d_fp16_B));
 #elif CUBLAS
@@ -1793,6 +1854,24 @@ clock_gettime(CLOCK_REALTIME, &maskRED_end);
                 c_cublas, CUDA_R_32F, MATRIX_N,
                 //CUDA_R_32F, CUBLAS_GEMM_DFALT_TENSOR_OP)); // tcu
                 CUBLAS_COMPUTE_32F, CUBLAS_GEMM_DEFAULT_TENSOR_OP)); // CUDA 11
+
+#elif OUTDEGREE
+    printf("Running compute_outdegree with cuBLAS on with tensor op...\n");
+    clock_gettime(CLOCK_REALTIME, &test_start);
+    //cudaErrCheck(cudaEventRecord(startcublasEX));
+    cublasErrCheck(cublasGemmEx(cublasHandle, CUBLAS_OP_N, CUBLAS_OP_N,
+                MATRIX_M, MATRIX_M, 1,
+                &alpha,
+                //d_fp16_BT, CUDA_R_16F, MATRIX_N,
+                d_fp16_B, CUDA_R_16F, MATRIX_M,
+                d_fp16_A, CUDA_R_16F, 1,
+                &beta,
+                c_cublas, CUDA_R_32F, MATRIX_M,
+                //CUDA_R_32F, CUBLAS_GEMM_DFALT_TENSOR_OP)); // tcu
+                CUBLAS_COMPUTE_32F, CUBLAS_GEMM_DEFAULT_TENSOR_OP)); // CUDA 11
+    clock_gettime(CLOCK_REALTIME, &test_end);
+
+// end of OUTDEGREE tcu cublasEX
 #else
 
     float *red_sum;
@@ -1905,8 +1984,8 @@ clock_gettime(CLOCK_REALTIME, &maskRED_end);
 
 #endif // end of MICRO
     // cudaFree inputs
-    cudaErrCheck(cudaFree(d_fp16_A));
-    cudaErrCheck(cudaFree(d_fp16_BT));
+//    cudaErrCheck(cudaFree(d_fp16_A));
+//    cudaErrCheck(cudaFree(d_fp16_BT));
 
 #if defined(RED) // reduction to get correct join counts
     clock_gettime(CLOCK_REALTIME, &gbCount_start);
@@ -1923,6 +2002,7 @@ clock_gettime(CLOCK_REALTIME, &maskRED_end);
 
     // return groupBy count
     if (gb && gb->gbExp[1].func == COUNT) {
+        // FIXME: why red_sum is 0
         gb_count<<<(MATRIX_M + 255) / 256, 256>>> (red_sum, MATRIX_M, gbCount);
     }
     
@@ -2034,8 +2114,11 @@ clock_gettime(CLOCK_REALTIME, &maskRED_end);
     //verify_result(c_host_cublas, MATRIX_M, MATRIX_N);
 #elif MICRO
     // only for verification
-    cudaErrCheck(cudaMemcpy(c_host_cublas, c_cublas, sizeof(float)*MATRIX_M*MATRIX_N, cudaMemcpyDeviceToHost));
-    verify_result(c_host_cublas,MATRIX_M, MATRIX_N);
+    //cudaErrCheck(cudaMemcpy(c_host_cublas, c_cublas, sizeof(float)*MATRIX_M*MATRIX_N, cudaMemcpyDeviceToHost));
+    //verify_result(c_host_cublas,MATRIX_M, MATRIX_N);
+
+#elif OUTDEGREE
+// do nothing for now
 
 #else // not using Reduction, sum using cublasSasum
     clock_gettime(CLOCK_REALTIME, &count_start);
@@ -2081,10 +2164,10 @@ clock_gettime(CLOCK_REALTIME, &maskRED_end);
 #endif
     printf("cublasEX tensor cores (FP16) took %fms\n", cublasEXTime);
     
-    cudaErrCheck(cudaEventDestroy(startcublasEX));
-    cudaErrCheck(cudaEventDestroy(stopcublasEX));
+//    cudaErrCheck(cudaEventDestroy(startcublasEX));
+//    cudaErrCheck(cudaEventDestroy(stopcublasEX));
     free(c_host_cublas);
-    cudaErrCheck(cudaFree(c_cublas));
+//    cudaErrCheck(cudaFree(c_cublas));
 #elif CUBLAS
     float cublasTime;
 
@@ -2169,9 +2252,13 @@ clock_gettime(CLOCK_REALTIME, &maskRED_end);
     //printf("Data type convertion: %lf(ms)\n", tcu_convert/(1000*1000));
     printf("cudaMemcpy: %lf(ms)\n", cuMemcpy_elapse/(1000*1000));
     printf("MMA total time: %lf(ms)\n", tcu_elapse/(1000*1000));
+    //double test_elapse = (test_end.tv_sec -  test_start.tv_sec)* BILLION + test_end.tv_nsec - test_start.tv_nsec;
+    //printf("cublasEX join time: %lf(ms)\n", test_elapse/(1000*1000));
 #ifdef CUBLAS_HALF
 
 if (gb && (gb->gbExp[1].func == COUNT || gb->gbExp[0].func == COUNT)) {
+    //double test_elapse = (test_end.tv_sec -  test_start.tv_sec)* BILLION + test_end.tv_nsec - test_start.tv_nsec;
+    //printf("cublasEX join time: %lf(ms)\n", test_elapse/(1000*1000));
     printf("cublasEX sum counting: %lf(ms)\n", count_elapse/(1000*1000));
 }
     printf("cublasCreate cold start: %lf(ms)\n", debug_elapse/(1000*1000));

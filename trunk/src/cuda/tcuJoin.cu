@@ -41,14 +41,6 @@
 
 using namespace nvcuda;
 
-// For wmma API, these must be multiples fo 16
-//#define MATRIX_M 16
-//#define MATRIX_N 16
-//#define MATRIX_K 16
-
-const int WMMA_M = 16;
-const int WMMA_N = 16;
-const int WMMA_K = 16;
 #define MAX_THREADS 1024 // For NVIDIA Turing Architecture
 
 // Define some error checking macros.
@@ -66,194 +58,6 @@ void cublasErrCheck_(cublasStatus_t stat, const char *file, int line) {
         fprintf(stderr, "cuBLAS Error: %d %s %d\n", stat, file, line);
     }
 }
-#endif
-
-#ifdef ITUNES
-    struct timespec itunesFill_start, itunesFill_end;
-#elif BEER
-    struct timespec beerFill_start, beerFill_end;
-#endif
-
-#ifdef BEER
-__host__ void static attrProjection(float * res, int height, int width, 
-        struct joinNode *jNode, 
-        short *A_id, short *B_id,
-        short *A_beer, short *B_beer,
-        short *A_factory, short *B_factory,
-        short *A_style, short *B_style,
-        short *A_abv, short *B_abv) {
-    /* jNode->leftOutputIndex[index] 
-     * index = 0 id
-     *         1 beer_name
-     *         2 factory
-     *         3 style
-     */
-    int i, m, n; // m: A tuple# | n: B tuple#
-    for (i = 0; i < height*width; i++) {
-        // project non-zero elements
-        if (res[i] != 0) {
-            m = i / width; // A_tuple#
-            n = i % width; // B_tuple#
-
-            // project left table attribute
-            for (int o = 0; o < jNode->leftOutputAttrNum; o++) {
-                // get attribute index
-                int leftAttrIndex = jNode->leftTable->attrIndex[o];
-                switch(leftAttrIndex) {
-                    case 0:
-                        printf("Table A ID: %hu\n", A_id[m]);
-                        break;
-                    case 1:
-                        printf("Table A Beer Name: %hu\n", A_beer[m]);
-                        break;
-                    case 2:
-                        printf("Table A Factory: %hu\n", A_factory[m]);
-                        break;
-                    case 3:
-                        printf("Table A Style: %hu\n", A_style[m]);
-                        break;
-                    case 4:
-                        printf("Table A ABV: %hu\n", A_abv[m]);
-                        break;
-                    default:
-                        printf("Invalid attribute index for Table A\n");
-                }
-            }
-
-            // project right table attribute
-            for (int o = 0; o < jNode->rightOutputAttrNum; o++) {
-                // get attribute index
-                int rightAttrIndex = jNode->rightTable->attrIndex[o];
-                switch(rightAttrIndex) {
-                    case 0:
-                        printf("Table B ID: %hu\n", B_id[n]);
-                        break;
-                    case 1:
-                        printf("Table B Beer Name: %hu\n", B_beer[n]);
-                        break;
-                    case 2:
-                        printf("Table B Factory: %hu\n", B_factory[n]);
-                        break;
-                    case 3:
-                        printf("Table B Style: %hu\n", B_style[n]);
-                        break;
-                    case 4:
-                        printf("Table B ABV: %hu\n", B_abv[n]);
-                        break;
-                    default:
-                        printf("Invalid attribute index for Table B\n");
-                }
-            }
-
-        }
-        printf("\n");
-    }
-    //TODO: implement materialized view if required -- combined projected column into a temp table
-    // e.g. beer2.sql -> 7x6 table, 7 rows(join count), 6 columns(projection)
-
-}
-#elif ITUNES
-__host__ void static attrProjection(float * res, int height, int width, 
-        struct joinNode *jNode, 
-        short *A_id, short *B_id,
-        short *A_song, short *B_song,
-        short *A_artist, short *B_artist,
-        short *A_album, short *B_album,
-        short *A_genre, short *B_genre,
-        short *A_price, short *B_price,
-        short *A_copyright, short *B_copyright,
-        short *A_time, short *B_time,
-        short *A_released, short *B_released) {
-
-    printf("height: %d\twidth: %d\n",height, width);
-    int i, m, n; // m: A tuple# | n: B tuple#
-    for (i = 0; i < height*width; i++) {
-        // project non-zero elements
-        if (res[i] != 0) {
-            m = i / width; // A_tuple#
-            n = i % width; // B_tuple#
-
-            // project left table attribute
-            for (int o = 0; o < jNode->leftOutputAttrNum; o++) {
-                // get attribute index
-                int leftAttrIndex = jNode->leftTable->attrIndex[o];
-                printf("leftAttrIndex: %d\n",leftAttrIndex);
-                switch(leftAttrIndex) {
-                    case 0:
-                        printf("Table A ID: %hu\n", A_id[m]);
-                        break;
-                    case 1:
-                        printf("Table A Song Name: %hu\n", A_song[m]);
-                        break;
-                    case 2:
-                        printf("Table A Artist: %hu\n", A_artist[m]);
-                        break;
-                    case 3:
-                        printf("Table A Album: %hu\n", A_album[m]);
-                        break;
-                    case 4:
-                        printf("Table A Genre: %hu\n", A_genre[m]);
-                        break;
-                    case 5:
-                        printf("Table A Price: %hu\n", A_price[m]);
-                        break;
-                    case 6:
-                        printf("Table A CopyRight: %hu\n", A_copyright[m]);
-                        break;
-                    case 7:
-                        printf("Table A Time: %hu\n", A_time[m]);
-                        break;
-                    case 8:
-                        printf("Table A Released: %hu\n", A_released[m]);
-                        break;
-                    default:
-                        printf("Invalid attribute index for Table A\n");
-                }
-            }
-
-            // project right table attribute
-            for (int o = 0; o < jNode->rightOutputAttrNum; o++) {
-                // get attribute index
-                int rightAttrIndex = jNode->rightTable->attrIndex[o];
-                //printf("rightOutputIndex: %d\n", rightAttrIndex);
-                switch(rightAttrIndex) {
-                    case 0:
-                        printf("Table B ID: %hu\n", B_id[n]);
-                        break;
-                    case 1:
-                        printf("Table B Song Name: %hu\n", B_song[n]);
-                        break;
-                    case 2:
-                        printf("Table B Artist: %hu\n", B_artist[n]);
-                        break;
-                    case 3:
-                        printf("Table B Album: %hu\n", B_album[n]);
-                        break;
-                    case 4:
-                        printf("Table B Genre: %hu\n", B_genre[n]);
-                        break;
-                    case 5:
-                        printf("Table B Price: %hu\n", B_price[n]);
-                        break;
-                    case 6:
-                        printf("Table B CopyRight: %hu\n", B_copyright[n]);
-                        break;
-                    case 7:
-                        printf("Table B Time: %hu\n", B_time[n]);
-                        break;
-                    case 8:
-                        printf("Table B Released: %hu\n", B_released[n]);
-                        break;
-                    default:
-                        printf("Invalid attribute index for Table B\n");
-                }
-            }
-
-        }
-        printf("\n");
-    }
-}
-
 #endif
 
 __global__ static void count_op(float *red_sum, int length) {
@@ -296,7 +100,9 @@ __global__ void pagerank(char *columnIdx, char *columnVal, int matWidth, half *m
     }
 }
 
-/* Fill matrix on device memory */
+/* Fill 1.0 in matrix of device memory on the index of unique value;
+   0.0, otherwise. 
+ */
 __global__ void static gpu_fill(char *column, int matWidth, half *mat, size_t tupleNum, int attrType) {
     int i = blockDim.x * blockIdx.x + threadIdx.x;
 
@@ -321,6 +127,7 @@ __global__ void static microbenchmark(char *column_idx, char *column_val, int ma
     mat[i*matWidth + (*colIndex)] = __int2half_rn(*val);
 }
 
+/* fill dense table */
 __global__ void static microbenchmark_new(char *column_idx, char *column_val, int matWidth, half *mat, size_t tupleNum, int attrType) {
     int i = blockDim.x * blockIdx.x + threadIdx.x;
 
@@ -357,45 +164,10 @@ __global__ void static gpu_fill_mm(char *column_idx, char *column_val, int matWi
     mat[i*matWidth + (*colIndex)] = (float)(*val);
 }
 
-__host__ void static print_vector(float *vec, int n) {
-    for(int i = 0; i < n; i++)
-        printf("%.1f ", vec[i]);
-}
-
-__host__ void static verify_test(half *matrix, int height, int width) {
-    int i;
-    for (i = 0; i < height*width; i++) {
-        printf("%.0f\t", __half2float(matrix[i]));
-        if ((i+1) % width == 0)
-            printf("\n\n");  
-    }
-
-}
-
 __host__ void static verify_result(float * matrix, int height, int width) {
     int i;
     for (i = 0; i < height*width; i++) {
         printf("%.2f\t", matrix[i]);
-        if ((i+1) % width == 0)
-            printf("\n\n");  
-    }
-
-}
-
-__host__ void static verify_result_short(short * matrix, int height, int width){
-    int i;
-    for (i = 0; i < height*width; i++) {
-        printf("%hu\t", matrix[i]);
-        if ((i+1) % width == 0)
-            printf("\n\n");  
-    }
-
-}
-
-__host__ void static verify_result_int(int * matrix, int height, int width) {
-    int i;
-    for (i = 0; i < height*width; i++) {
-        printf("%d\t", matrix[i]);
         if ((i+1) % width == 0)
             printf("\n\n");  
     }
@@ -444,21 +216,6 @@ __host__ void transpose(float *in, float *out, int row, int col) {
 }
 #endif
 
-#ifdef WMMA_INT4
-__host__ int sum_matrix_int(int *mat, int height, int width) {
-    int i, sum = 0;
-    for (i = 0; i < height*width; i++)
-        sum += mat[i];
-    return sum;
-}
-#else
-__host__ int sum_matrix(float *mat, int height, int width) {
-    int i, sum = 0;
-    for (i = 0; i < height*width; i++)
-        sum += mat[i];
-    return sum;
-}
-#endif
 /* Find the nearest multiple of N, check the width of matrix or tupleNum to form the matrices for MM */
 __host__ int nearestMultipleN(int inNum, int n) {
     if (!n)
@@ -468,474 +225,6 @@ __host__ int nearestMultipleN(int inNum, int n) {
         return inNum;
     return (inNum + n - remain);
 }
-
-/*
- *  If the query only need to return the count of join result.
- *  result t = mat1*mat.T
- *  count = t.size - sum(t) -- how many non-zero in t
- */
-#ifdef WMMA_INT4
-__host__ void static tcu_match(struct joinNode *jNode, int width,
-         signed char *A, signed char *B, int attr_type1, int attr_type2) {
-
-    int A_tupleNum = jNode->leftTable->tupleNum;
-    int B_tupleNum = jNode->rightTable->tupleNum;
-
-    // create first matrix
-    int i, colContIdx; // index of column content
-    colContIdx = 0;
-    for (i = 0; i < A_tupleNum; i++) {
-        int *colCont;   // content of column
-        colCont = (int*)(&jNode->leftTable->content[jNode->leftKeyIndex][colContIdx]);
-        colContIdx += attr_type1; // 4 because of INT type
-        A[i*width+(*colCont)] = 1; // mark as 1 if appear in the matrix
-    }
-
-    // create second matrix
-    colContIdx = 0;
-    for (i = 0; i < B_tupleNum; i++) {
-        int *colCont;
-        colCont = (int*)(&jNode->rightTable->content[jNode->rightKeyIndex][colContIdx]);
-        colContIdx += attr_type1;
-        B[i*width+(*colCont)] = 1;
-    }
-
-    // transpose second matrix
-    //transpose(B, B_T, B_tupleNum, width);
-
-    // perform MM & return count on device
-}
-#elif CUBLAS_HALF
-// host version
-__host__ void static tcu_match(struct joinNode *jNode, int width,
-         short *A, short *B, int attr_type1, int attr_type2) {
-
-    int A_tupleNum = jNode->leftTable->tupleNum;
-    int B_tupleNum = jNode->rightTable->tupleNum;
-
-    // create first matrix
-    int i, colContIdx; // index of column content
-    colContIdx = 0;
-    for (i = 0; i < A_tupleNum; i++) {
-        int *colCont;   // content of column
-        colCont = (int*)(&jNode->leftTable->content[jNode->leftKeyIndex][colContIdx]);
-        colContIdx += attr_type1; // 4 because of INT type
-        A[i*width+(*colCont)] = (short)1; // mark as 1 if appear in the matrix
-    }
-
-    // create second matrix
-    colContIdx = 0;
-    for (i = 0; i < B_tupleNum; i++) {
-        int *colCont;
-        colCont = (int*)(&jNode->rightTable->content[jNode->rightKeyIndex][colContIdx]);
-        colContIdx += attr_type1;
-        B[i*width+(*colCont)] = (short)1;
-    }
-
-    // transpose second matrix
-    //transpose(B, B_T, B_tupleNum, width);
-
-    // perform MM & return count on device
-}
-#elif CUBLAS || WMMA_HALF 
-__host__ void static tcu_match(struct joinNode *jNode, int width,
-         float *A, float *B, int attr_type1, int attr_type2) {
-
-    int A_tupleNum = jNode->leftTable->tupleNum;
-    int B_tupleNum = jNode->rightTable->tupleNum;
-
-    // create first matrix
-    int i, colContIdx; // index of column content
-    colContIdx = 0;
-    for (i = 0; i < A_tupleNum; i++) {
-        int *colCont;   // content of column
-        colCont = (int*)(&jNode->leftTable->content[jNode->leftKeyIndex][colContIdx]);
-        colContIdx += attr_type1; // 4 because of INT type
-        A[i*width+(*colCont)] = 1; // mark as 1 if appear in the matrix
-    }
-
-    // create second matrix
-    colContIdx = 0;
-    for (i = 0; i < B_tupleNum; i++) {
-        int *colCont;
-        colCont = (int*)(&jNode->rightTable->content[jNode->rightKeyIndex][colContIdx]);
-        colContIdx += attr_type1;
-        B[i*width+(*colCont)] = 1;
-    }
-
-    // transpose second matrix
-    //transpose(B, B_T, B_tupleNum, width);
-
-    // perform MM & return count on device
-}
-#endif
-
-#ifdef ITUNES
-/* iTunes dataset with iTunes.sql */
-__host__ void static itunes_match(struct joinNode *jNode, int width,
-         short *A, short *B, int attr_type1, int attr_type2, 
-         int attr_num1, int attr_num2,
-         short *A_id, short *B_id,
-         short *A_song, short *B_song,
-         short *A_artist, short *B_artist,
-         short *A_album, short *B_album,
-         short *A_genre, short *B_genre,
-         short *A_price, short *B_price,
-         short *A_copyright, short *B_copyright,
-         short *A_time, short *B_time,
-         short *A_released, short *B_released
-         ) {
-
-    int A_tupleNum = jNode->leftTable->tupleNum;
-    int B_tupleNum = jNode->rightTable->tupleNum;
-
-    //printf("attr_num1: %d\n", attr_num1);
-    //printf("attr_num2: %d\n", attr_num2);
-
-    int m, n;
-    for (m = 0; m < attr_num1; m++) {
-        int A_col_idx = jNode->leftTable->attrIndex[m];
-        int k = 0;
-
-        for (n = 0; n < A_tupleNum*attr_type1; n+=attr_type1) {
-            int *temp;
-            temp = (int*)(&jNode->leftTable->content[m][n]);
-
-            switch(A_col_idx) {
-                case 0:
-                    //printf("A id: %d\n", *temp);
-                    A_id[k] = (short)*temp;
-                    break;
-                case 1:
-                    //printf("A song: %d\n", *temp);
-                    A_song[k] = (short)*temp;
-                    break;
-                case 2:
-                    A_artist[k] = (short)*temp;
-                    break;
-                case 3:
-                    A_album[k] = (short)*temp;
-                    break;
-                case 4:
-                    A_genre[k] = (short)*temp;
-                    break;
-                case 5:
-                    A_price[k] = (short)*temp;
-                    break;
-                case 6:
-                    A_copyright[k] = (short)*temp;
-                    break;
-                case 7:
-                    //printf("A time: %d\n", *temp);
-                    A_time[k] = (short)*temp;
-                    break;
-                case 8:
-                    A_released[k] = (short)*temp;
-                    break;
-                default:
-                    printf("Invalid attribute index for Table A\n");
-            } 
-
-            k++;
-        }
-    }
-
-    for (m = 0; m < attr_num2; m++) {
-        int B_col_idx = jNode->rightTable->attrIndex[m];
-        int k = 0;
-
-        for (n = 0; n < B_tupleNum*attr_type2; n+=attr_type2) {
-            int *temp;
-            temp = (int*)(&jNode->rightTable->content[m][n]);
-            
-            switch(B_col_idx) {
-                case 0:
-                    B_id[k] = (short)*temp;
-                    break;
-                case 1:
-                    B_song[k] = (short)*temp;
-                    break;
-                case 2:
-                    B_artist[k] = (short)*temp;
-                    break;
-                case 3:
-                    B_album[k] = (short)*temp;
-                    break;
-                case 4:
-                    B_genre[k] = (short)*temp;
-                    break;
-                case 5:
-                    B_price[k] = (short)*temp;
-                    break;
-                case 6:
-                    B_copyright[k] = (short)*temp;
-                    break;
-                case 7:
-                    B_time[k] = (short)*temp;
-                    break;
-                case 8:
-                    B_released[k] = (short)*temp;
-                    break;
-                default:
-                    printf("Invalid attribute index for Table B\n");
-            }
-
-            k++;
-        }
-    }
-   
-    clock_gettime(CLOCK_REALTIME, &itunesFill_start);
-    // create first matrix
-    int i, colContIdx; // index of column content
-    colContIdx = 0;
-    for (i = 0; i < A_tupleNum; i++) {
-        int *colCont;   // content of column
-        colCont = (int*)(&jNode->leftTable->content[jNode->leftKeyIndex][colContIdx]);
-        colContIdx += attr_type1; // 4 because of INT type
-        A[i*width+(*colCont)] = (short)1; // mark as 1 if appear in the matrix
-    }
-
-    // create second matrix
-    colContIdx = 0;
-    for (i = 0; i < B_tupleNum; i++) {
-        int *colCont;
-        colCont = (int*)(&jNode->rightTable->content[jNode->rightKeyIndex][colContIdx]);
-        colContIdx += attr_type1;
-        B[i*width+(*colCont)] = (short)1;
-    } 
-    clock_gettime(CLOCK_REALTIME, &itunesFill_end);
-}
-#endif
-
-#ifdef BEER
-/* correspond to beer.sql 
- * SELECT TABLEA.BEER, TABLEA.ABV, TABLEB.STYLE
- * FROM TABLEA, TABLEB
- * WHERE TABLEA.ABV = TABLEB.ABV;
- */
-// #attributes to store depends on SELECT statements
-// iterate sequence depends on SELECT sequence; however,
-// col_idx sequence is fixed, depends on schema
-__host__ void static beer_match(struct joinNode *jNode, int width,
-         short *A, short *B, int attr_type1, int attr_type2, 
-         int attr_num1, int attr_num2,
-         short *A_id, short *B_id,
-         short *A_beer, short *B_beer,
-         short *A_factory, short *B_factory,
-         short *A_style, short *B_style,
-         short *A_abv, short *B_abv) {
-
-    int A_tupleNum = jNode->leftTable->tupleNum;
-    int B_tupleNum = jNode->rightTable->tupleNum;
-    //for (int o = 0; o < jNode->leftOutputAttrNum; o++)
-    //    printf("left output index: %d\n", jNode->leftOutputIndex[o]);
-    //for (int o = 0; o < jNode->rightOutputAttrNum; o++)
-    //    printf("right output index: %d\n", jNode->rightOutputIndex[o]);
-    //printf("attr_num1: %d\n", attr_num1);
-    //printf("attr_num2: %d\n", attr_num2);
-    int m, n;
-    for (m = 0; m < attr_num1; m++) {
-        int A_col_idx = jNode->leftTable->attrIndex[m];
-        int k = 0;
-
-        for (n = 0; n < A_tupleNum*attr_type1; n+=attr_type1) {
-            int *temp;
-            temp = (int*)(&jNode->leftTable->content[m][n]);
-
-            switch(A_col_idx) { 
-                case 0:
-                    A_id[k] = (short)*temp;
-                    //printf("A col_idx[0]: %d\n", *temp);
-                    break;
-                case 1:
-                    A_beer[k] = (short)*temp;
-                    //printf("A col_idx[1]: %d\n", *temp);
-                    break;
-                case 2:
-                    A_factory[k] = (short)*temp;
-                    //printf("A col_idx[2]: %d\n", *temp);
-                    break;
-                case 3:
-                    A_style[k] = (short)*temp;
-                    //printf("A col_idx[3]: %d\n", *temp);
-                    break;
-                case 4:
-                    A_abv[k] = (short)*temp;
-                    //printf("A col_idx[4]: %d\n", *temp);
-                    break;
-                default:
-                    printf("Invalid attribute index for Table A\n");
-            }
-
-            k++;
-        }
-    }
-
-    for (m = 0; m < attr_num2; m++) {
-        int B_col_idx = jNode->rightTable->attrIndex[m];
-        int k = 0;
-
-        for (n = 0; n < B_tupleNum*attr_type2; n+=attr_type2) {
-            int *temp;
-            temp = (int*)(&jNode->rightTable->content[m][n]);
-
-            switch(B_col_idx) { 
-                case 0:
-                    B_id[k] = (short)*temp;
-                    //printf("B col_idx[0]: %d\n", *temp);
-                    break;
-                case 1:
-                    B_beer[k] = (short)*temp;
-                    //printf("B col_idx[1]: %d\n", *temp);
-                    break;
-                case 2:
-                    B_factory[k] = (short)*temp;
-                    //printf("B col_idx[2]: %d\n", *temp);
-                    break;
-                case 3:
-                    B_style[k] = (short)*temp;
-                    //printf("B col_idx[3]: %d\n", *temp);
-                    break;
-                case 4:
-                    B_abv[k] = (short)*temp;
-                    //printf("B col_idx[4]: %d\n", *temp);
-                    break;
-                default:
-                    printf("Invalid attribute index for Table B\n");
-            }
-
-            k++;
-        }
-    }
-
-    clock_gettime(CLOCK_REALTIME, &beerFill_start);
-    // create first matrix
-    int i, colContIdx; // index of column content
-    colContIdx = 0;
-    for (i = 0; i < A_tupleNum; i++) {
-        int *colCont;   // content of column
-        colCont = (int*)(&jNode->leftTable->content[jNode->leftKeyIndex][colContIdx]);
-        colContIdx += attr_type1; // 4 because of INT type
-        A[i*width+(*colCont)] = (short)1; // mark as 1 if appear in the matrix
-    }
-
-    // create second matrix
-    colContIdx = 0;
-    for (i = 0; i < B_tupleNum; i++) {
-        int *colCont;
-        colCont = (int*)(&jNode->rightTable->content[jNode->rightKeyIndex][colContIdx]);
-        colContIdx += attr_type1;
-        B[i*width+(*colCont)] = (short)1;
-    }
-    clock_gettime(CLOCK_REALTIME, &beerFill_end);
-}
-#endif
-
-/* Map the table entires into matrix for tensor core to use 
- * Assum both matrix have the same dimension and the value in INT type for now, e.g., both 16x16 dim
- * To support multiple types, this function need to be modified
- */
-
-// micro benchmark for simple matrix multiplication query
-__host__ void static micro_mm(struct joinNode *jNode, float * matrix1, float * matrix2, int width,
-        int attr_num1, int attr_num2, int attr_type1, int attr_type2) {
-    int *mat1_i, *mat1_j, *mat1_val; // row index, col index, value
-    int *mat2_i, *mat2_j, *mat2_val;
-
-    int leftTupleNum = jNode->leftTable->tupleNum;
-    int rightTupleNum = jNode->rightTable->tupleNum;
- 
-    mat1_i = (int*)malloc(sizeof(int) * leftTupleNum); 
-    mat1_j = (int*)malloc(sizeof(int) * leftTupleNum); 
-    mat1_val = (int*)malloc(sizeof(int) * leftTupleNum); 
-   
-    mat2_i = (int*)malloc(sizeof(int) * rightTupleNum); 
-    mat2_j = (int*)malloc(sizeof(int) * rightTupleNum); 
-    mat2_val = (int*)malloc(sizeof(int) * rightTupleNum); 
-
-    int i, j; 
-    for (i = 0; i < attr_num1; i++) {
-        int left_col_idx = jNode->leftTable->attrIndex[i];
-        int k = 0; // k is row-index of the table (tupleNum index)
-        
-        for (j = 0; j < leftTupleNum * attr_type1; j+=attr_type1) {
-            int *temp;
-            temp = (int*)(&jNode->leftTable->content[i][j]);
-            
-            if (left_col_idx == 0) { // match to schema's i
-                mat1_i[k] = *temp;
-            }
-            else if (left_col_idx == 1) { // match to schema's j
-                mat1_j[k] = *temp;
-            }
-            else { // match to schema's val
-                // read 4 bytes at once because the type is int
-                mat1_val[k] = *temp;
-            }
-            k++;
-        }
-    }
-
-    
-    for (i = 0; i < attr_num2; i++) {
-        int right_col_idx = jNode->rightTable->attrIndex[i];
-        int k = 0;
-        
-        for (j = 0; j < rightTupleNum * attr_type2; j+=attr_type2) {
-            int *temp;
-            temp = (int*)(&jNode->rightTable->content[i][j]);
-            
-            if (right_col_idx == 0) {
-                mat2_i[k] = *temp;
-            }
-            else if (right_col_idx == 1) {
-                mat2_j[k] = *temp;
-            }
-            else {
-                mat2_val[k] = *temp;
-            }
-            k++;
-        }
-    }
-
-    // map index to array[width * i + j] = val
-    // prepare two matrices (1-D array format) for WMMA
-    int m;
-    for (m = 0; m < leftTupleNum; m++) {
-        matrix1[width * mat1_i[m] + mat1_j[m]] = (float)mat1_val[m];
-        //printf("%.2f\t", matrix1[width * mat1_i[m] + mat1_j[m]]);
-    }
-    //printf("\n");
-
-    //printf("rightTupleNum: %d\n", rightTupleNum);
-    for (m = 0; m < rightTupleNum; m++) {
-        //printf("mat2 val: %d\tn: %d\n", mat2_val[n], n);
-        matrix2[width * mat2_i[m] + mat2_j[m]] = (float)mat2_val[m];
-        //printf("%.2f\t", matrix2[width * mat2_i[m] + mat2_j[m]]);
-    }
-    //printf("\n");
-
-    free(mat1_i);
-    free(mat1_j);
-    free(mat1_val);
-    free(mat2_i);
-    free(mat2_j);
-    free(mat2_val);
-}
-
-/* Print matrix content in device memory */
-//#ifdef DEBUG
-__global__ void static verify_gpuResult(half * matrix, int width) {
-    int i;
-    for (i = 0; i < width*width; i++) {
-        //cuPrintf("%.1f\t", __half2float(matrix[i]));
-        if ((i+1) % width == 0)
-            return;
-          //cuPrintf("\n");  
-    }
-
-}
-//#endif
 
 __global__ void static pageRankAdd(float *mat, int n, float pageRankAlpha, int numNodes) {
     int idx = blockDim.x * blockIdx.x + threadIdx.x;
@@ -1001,20 +290,6 @@ __device__ static float getVal(char **content, struct mathExp exp, int pos) {
     return res;
 }
 
-// since WMMA perform C = alpha*A*B+beta*C, here we just fill operator MULTIPLY
-__device__ static void fillMathExp(char **content, struct mathExp exp, int pos, float * A, float * B) {
-
-    if (exp.op == MULTIPLY) {
-        if (((struct mathExp*)exp.exp)[0].op == NOOP)
-            A[pos] = getVal(content, ((struct mathExp*)exp.exp)[0], pos);
-        if (((struct mathExp*)exp.exp)[1].op == NOOP)
-            B[pos] = getVal(content, ((struct mathExp*)exp.exp)[1], pos);
-    }
-        
-    return;
-}
-
-//#ifdef WMMA_HALF
 /* set the first column of the matrix to be 1.0 */
 __host__ static void set_mask(float *mask, int height, int width) {
     for (int i = 0; i < height*width; i+=width) {
@@ -1030,7 +305,6 @@ __host__ static void set_mask2(float *mask, int height, int width) {
     }
     
 }
-//#endif
 
 __host__ static void setVector(float *vec, int n) {
     for (int i = 0; i < n; i++)
@@ -1041,144 +315,6 @@ __host__ static void setRed(short *red, int n) {
     for (int i = 0; i < n; i++)
         red[i] = (short)1;
 }
-
-__global__ static void agg_cal_cons(char ** content, int colNum, struct groupByExp* exp, long tupleNum, float * A, float * B) {
-    int stride = blockDim.x * gridDim.x;
-    int index = blockIdx.x * blockDim.x + threadIdx.x;
-
-    for(int i=index;i<tupleNum;i+=stride){
-        for(int j=0;j<colNum;j++){
-            int func = exp[j].func;
-            // for now, we only care about SUM
-            if (func == SUM) {
-                // 1. fill data into two matrices
-                //transform_data(content, exp[j].exp, i, A, B);
-                fillMathExp(content, exp[j].exp, i, A, B);
-                // maybe the order does not important if we can get relative ranking
-
-                // 2. copy data into device using cudaMemcpy (if directly assign in device memory, can avoid this step)
-
-            } else if (func == AVG) {
-                // not the main point now
-            }
-        }
-    }
-} 
-
-/* Performs an MxNxK GEMM (C=alpha*A*B + beta*C) assuming:
- *  1) Matrices are packed in memory.
- *  2) M, N and K are multiples of 16.
- *  3) Neither A nor B are transposed.
- */
-__global__ void wmma_example(half *a, half *b, float *c, int M, int N, int K, float alpha, float beta) {
-    // Leading dimensions. Packed with no transpositions.
-    int lda = M;
-    int ldb = K;
-    int ldc = M;
-
-    // Tile using a 2D grid
-    int warpM = (blockIdx.x * blockDim.x + threadIdx.x) / warpSize;
-    int warpN = (blockIdx.y * blockDim.y + threadIdx.y);
-
-    // Declare the fragments
-    wmma::fragment<wmma::matrix_a, WMMA_M, WMMA_N, WMMA_K, half, wmma::row_major> a_frag;
-    wmma::fragment<wmma::matrix_b, WMMA_M, WMMA_N, WMMA_K, half, wmma::col_major> b_frag;
-    wmma::fragment<wmma::accumulator, WMMA_M, WMMA_N, WMMA_K, float> acc_frag;
-    wmma::fragment<wmma::accumulator, WMMA_M, WMMA_N, WMMA_K, float> c_frag;
-
-    wmma::fill_fragment(acc_frag, 0.0f);
-
-    // Loop over k
-    for (int i = 0; i < K; i += WMMA_K) {
-        int aRow = warpM * WMMA_M;
-        int aCol = i;
-
-        int bRow = i;
-        int bCol = warpN * WMMA_N;
-
-        // Bounds checking
-        if (aRow < M && aCol < K && bRow < K && bCol < N) { 
-            // Load the inputs
-            wmma::load_matrix_sync(a_frag, a + aRow + aCol * lda, lda);
-            wmma::load_matrix_sync(b_frag, b + bRow + bCol * ldb, ldb);
-
-            // Perform the matrix multiplication
-            wmma::mma_sync(acc_frag, a_frag, b_frag, acc_frag);
-        }
-
-    }
-
-    // Load in the current value of c, scale it by beta, and add this our result scaled by alpha
-    int cRow = warpM * WMMA_M;
-    int cCol = warpN * WMMA_N;
-
-    if (cRow < M && cCol < N) {
-        wmma::load_matrix_sync(c_frag, c + cRow + cCol * ldc, ldc, wmma::mem_row_major);
-
-        for(int i=0; i < c_frag.num_elements; i++) {
-            c_frag.x[i] = alpha * acc_frag.x[i] + beta * c_frag.x[i];
-        }
-
-        // Store the output
-        wmma::store_matrix_sync(c + cRow + cCol * ldc, c_frag, ldc, wmma::mem_row_major);
-    }
-}
-
-#ifdef WMMA_INT4
-__global__ void wmma_int(signed char *a, signed char *b, int *c, int M, int N, int K, int alpha, int beta) {
-    // Leading dimensions. Packed with no transpositions.
-    int lda = M;
-    int ldb = K;
-    int ldc = M;
-
-    // Tile using a 2D grid
-    int warpM = (blockIdx.x * blockDim.x + threadIdx.x) / warpSize;
-    int warpN = (blockIdx.y * blockDim.y + threadIdx.y);
-
-    // Declare the fragments
-    wmma::fragment<wmma::matrix_a, WMMA_M, WMMA_N, WMMA_K, signed char, wmma::row_major> a_frag;
-    wmma::fragment<wmma::matrix_b, WMMA_M, WMMA_N, WMMA_K, signed char, wmma::col_major> b_frag;
-    wmma::fragment<wmma::accumulator, WMMA_M, WMMA_N, WMMA_K, int> acc_frag;
-    wmma::fragment<wmma::accumulator, WMMA_M, WMMA_N, WMMA_K, int> c_frag;
-
-    wmma::fill_fragment(acc_frag, 0);
-
-    // Loop over k
-    for (int i = 0; i < K; i += WMMA_K) {
-        int aRow = warpM * WMMA_M;
-        int aCol = i;
-
-        int bRow = i;
-        int bCol = warpN * WMMA_N;
-
-        // Bounds checking
-        if (aRow < M && aCol < K && bRow < K && bCol < N) { 
-            // Load the inputs
-            wmma::load_matrix_sync(a_frag, a + aRow + aCol * lda, lda);
-            wmma::load_matrix_sync(b_frag, b + bRow + bCol * ldb, ldb);
-
-            // Perform the matrix multiplication
-            wmma::mma_sync(acc_frag, a_frag, b_frag, acc_frag);
-        }
-
-    }
-
-    // Load in the current value of c, scale it by beta, and add this our result scaled by alpha
-    int cRow = warpM * WMMA_M;
-    int cCol = warpN * WMMA_N;
-
-    if (cRow < M && cCol < N) {
-        wmma::load_matrix_sync(c_frag, c + cRow + cCol * ldc, ldc, wmma::mem_row_major);
-
-        for(int i=0; i < c_frag.num_elements; i++) {
-            c_frag.x[i] = alpha * acc_frag.x[i] + beta * c_frag.x[i];
-        }
-
-        // Store the output
-        wmma::store_matrix_sync(c + cRow + cCol * ldc, c_frag, ldc, wmma::mem_row_major);
-    }
-}
-#endif
 
 /*
  * tcuJoinn using NVIDIA's WMMA lib to perform matrix multiplication can aggregation..
@@ -1208,78 +344,47 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
 #endif
     
     struct tableNode * res = NULL;
-    /*
-    res = (struct tableNode*) malloc(sizeof(struct tableNode));
-    res->totalAttr = jNode->totalAttr;
-    res->tupleSize = jNode->tupleSize;
-    res->attrType = (int *) malloc(res->totalAttr * sizeof(int));
-    CHECK_POINTER(res->attrType);
-    res->attrSize = (int *) malloc(res->totalAttr * sizeof(int));
-    CHECK_POINTER(res->attrSize);
-    res->attrIndex = (int *) malloc(res->totalAttr * sizeof(int));
-    CHECK_POINTER(res->attrIndex);
-    res->attrTotalSize = (int *) malloc(res->totalAttr * sizeof(int));
-    CHECK_POINTER(res->attrTotalSize);
-    res->content = (char **) malloc(res->totalAttr * sizeof(char *));
-    CHECK_POINTER(res->content);
-    */
 
 //#ifdef DEBUG
     //cudaPrintfInit();
 //#endif
-    struct timespec test_start, test_end;
     struct timespec tcu_start, tcu_end;
     struct timespec init_start, init_end;
     struct timespec fill_start, fill_end;
     struct timespec maskRED_start, maskRED_end;
     struct timespec pagerankVerify_start, pagerankVerify_end;
-    //struct timespec convert_start, convert_end;
     struct timespec cuMemcpy_start, cuMemcpy_end;
     clock_gettime(CLOCK_REALTIME, &tcu_start);
     clock_gettime(CLOCK_REALTIME, &init_start);
+
     int leftTupleNum = jNode->leftTable->tupleNum;
     int rightTupleNum = jNode->rightTable->tupleNum;
 
     // parse user input dimension from command line
     //int MATRIX_M, MATRIX_N, MATRIX_K;
     uint64_t MATRIX_M, MATRIX_N, MATRIX_K; // use uint64_t to avoid overflow
-#if defined(WMMA_HALF) || defined(WMMA_INT4)
-    // WMMA requires the dimension to be multiple of 16
-    MATRIX_M = (uint64_t)nearestMultipleN(leftTupleNum, 16);
-    MATRIX_N = (uint64_t)nearestMultipleN(rightTupleNum, 16);
-#else
     
-    MATRIX_K = *matrix_dim; // user input, matrix width (if WMMA, multiple of 16)
+    MATRIX_K = *matrix_dim; // user input, matrix width
 #ifdef MICRO
-    // square matrix M=N=K
+    // square matrix dense table (M=N=K)
     MATRIX_M = MATRIX_K;
     MATRIX_N = MATRIX_K;
 #else
     MATRIX_M = (uint64_t)leftTupleNum;
     MATRIX_N = (uint64_t)rightTupleNum;
 #endif // end of MICRO
-#endif
-    //MATRIX_K = *matrix_dim; // user input, matrix width (if WMMA, multiple of 16)
-/*
-    printf("left  tuple #: %d\n", leftTupleNum);
-    printf("right tuple #: %d\n", rightTupleNum);
+
+    printf("Left Tuple #: %d\n", leftTupleNum);
+    printf("Right Tuple #: %d\n", rightTupleNum);
     printf("MATRIX_M: %lu\n", MATRIX_M);
     printf("MATRIX_N: %lu\n", MATRIX_N);
     printf("MATRIX_K: %lu\n", MATRIX_K);
-*/
-#ifdef DEBUG
 
 #ifdef PAGERANK
     printf("PageRank Alpha: %.3f\n", pageRankAlpha);
     printf("(1-alpha)/#node: %.6f\n", (1-pageRankAlpha)/MATRIX_K);
 #endif
 
-    printf("left  tuple #: %d\n", leftTupleNum);
-    printf("right tuple #: %d\n", rightTupleNum);
-    printf("MATRIX_M: %lu\n", MATRIX_M);
-    printf("MATRIX_N: %lu\n", MATRIX_N);
-    printf("MATRIX_K: %lu\n", MATRIX_K);
-#endif
 
 #if defined(CUBLAS_HALF) || defined(CUBLAS)
     struct timespec debug_start, debug_end; // cublasCreate has init overhead
@@ -1287,19 +392,24 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
     struct timespec transpose_start, transpose_end;
 #endif
 
-#ifdef WMMA_INT4
-    signed char *h_int_A, *h_int_B; // host int4 array
-    signed char *d_int_A, *d_int_B; // device int4 array
-    int *c_int_wmma, *c_host_int_wmma;
-    int alpha = 1;
-    int beta = 0;
-#elif CUBLAS_HALF
+    // read row data from tbl
+    char *gpu_fact, *gpu_dim;         // index
+    char *gpu_fact_val, *gpu_dim_val; // value
+    float alpha = 1.0f;
+    float beta = 0.0f;
+#ifdef CUBLAS_HALF
     half *d_fp16_A, *d_fp16_B, *d_fp16_BT;
-    char *gpu_fact, *gpu_dim; // raw data idx
-    char *gpu_fact_val, *gpu_dim_val; // raw data val
     float *c_cublas;
     half *c_fp16_cublas;
+
+//    char *gpu_fact, *gpu_dim;         // raw data idx
+//    char *gpu_fact_val, *gpu_dim_val; // raw data val
+//    float alpha = 1.0f;
+//    float beta = 0.0f;
+    half alpha_fp16 = __float2half(1.0f);
+    half beta_fp16 = __float2half(1.0f);
     float *c_host_cublas;
+
 #ifdef PAGERANK
     //char *factID, *dimID; // use previous gpu_fact/gpu_dim
     char *factVal, *dimVal;
@@ -1310,13 +420,8 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
 #ifdef RED
     float *h_red2, *d_red2;
 #endif
-    float alpha = 1.0f;
-    float beta = 0.0f;
-    half alpha_fp16 = __float2half(1.0f);
-    half beta_fp16 = __float2half(1.0f);
 
-    // use tensor core or cublas
-    cublasHandle_t cublasHandle; // cublas tcu
+    cublasHandle_t cublasHandle;
     cudaEvent_t startcublasEX;
     cudaEvent_t stopcublasEX;
 
@@ -1326,54 +431,19 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
     clock_gettime(CLOCK_REALTIME, &debug_start);
     cublasErrCheck(cublasCreate(&cublasHandle));
     clock_gettime(CLOCK_REALTIME, &debug_end);
-    // enable tensor core
     cublasErrCheck(cublasSetMathMode(cublasHandle, CUBLAS_TENSOR_OP_MATH));
-    //cublasErrCheck(cublasSetMathMode(cublasHandle,CUBLAS_DEFAULT_MATH));
 
-#ifdef BEER
-    /* Beer dataset */
-    short *h_id_A, *h_id_B;
-    short *h_beer_A, *h_beer_B;
-    short *h_factory_A, *h_factory_B;
-    short *h_style_A, *h_style_B;
-    short *h_abv_A, *h_abv_B;
-#elif ITUNES
-    /* iTunes dataset */
-    short *h_id_A, *h_id_B;
-    short *h_song_A, *h_song_B;
-    short *h_artist_A, *h_artist_B;
-    short *h_album_A, *h_album_B;
-    short *h_genre_A, *h_genre_B;
-    short *h_price_A, *h_price_B;
-    short *h_copyright_A, *h_copyright_B;
-    short *h_time_A, *h_time_B;
-    short *h_released_A, *h_released_B;
-#endif // either BEER or ITUNES dataset
-
-#elif WMMA_HALF
-    float *h_fp32_A, *h_fp32_B; // host float32 array
-    float *d_fp32_A, *d_fp32_B; // device float32 array
-    half *d_fp16_A, *d_fp16_B;
-    float *c_wmma, *c_wmma_sum1, *c_wmma_sum2, *c_host_wmma;
-    float alpha = 1.0f;
-    float beta = 0.0f;
-
-    //mask for reduction
-    float *d_fp32_mask, *h_fp32_mask;
-    float *d_fp32_mask2, *h_fp32_mask2;
-    half *d_fp16_mask, *d_fp16_mask2;
-
-#elif CUBLAS // CUBLAS SGEMM
-    float *h_fp32_A, *h_fp32_B; // host float32 array
+#elif CUBLAS // SGEMM
+    float *h_fp32_A, *h_fp32_B;             // host float32 array
     float *d_fp32_A, *d_fp32_B, *d_fp32_BT; // device float32 array
-    char *gpu_fact, *gpu_dim; // raw data index
-    char *gpu_fact_val, *gpu_dim_val; // raw data val
+//    char *gpu_fact, *gpu_dim; // raw data index
+//    char *gpu_fact_val, *gpu_dim_val; // raw data val
     float *c_sgemm, *c_host_sgemm;
-    float alpha = 1.0f;
-    float beta = 0.0f;
+//    float alpha = 1.0f;
+//    float beta = 0.0f;
 
-    cublasHandle_t cublasHandle_default; // cublas default
-    cudaEvent_t startcublas; // for sgemm (FP32)
+    cublasHandle_t cublasHandle_default;
+    cudaEvent_t startcublas;
     cudaEvent_t stopcublas;
 
     cudaErrCheck(cudaEventCreate(&startcublas));
@@ -1382,41 +452,10 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
     cublasErrCheck(cublasCreate(&cublasHandle_default));
     clock_gettime(CLOCK_REALTIME, &debug_end);
     cublasErrCheck(cublasSetMathMode(cublasHandle_default,CUBLAS_DEFAULT_MATH));
-#endif // start L1218
-
-#if defined(WMMA_HALF) || defined(WMMA_INT4)
-    cudaEvent_t startWMMA;
-    cudaEvent_t stopWMMA;
-    cudaErrCheck(cudaEventCreate(&startWMMA));
-    cudaErrCheck(cudaEventCreate(&stopWMMA)); 
-
-    dim3 gridDim;
-    dim3 blockDim;
-    // blockDim.x must be a multple of warpSize
-    // 128x4 means we have 16 warps and a block computes a 64x64 output tile
-    blockDim.x = 128;
-    blockDim.y = 4;
-
-    gridDim.x = (MATRIX_M + (WMMA_M * blockDim.x / 32 - 1)) / (WMMA_M * blockDim.x / 32);
-    gridDim.y = (MATRIX_N + WMMA_N * blockDim.y - 1) / (WMMA_N * blockDim.y);
 #endif
 
-#ifdef WMMA_INT4
-    h_int_A = (signed char*)calloc(MATRIX_M*MATRIX_K, sizeof(signed char));
-    h_int_B = (signed char*)calloc(MATRIX_K*MATRIX_N, sizeof(signed char));
-    c_host_int_wmma = (int*)calloc(MATRIX_M*MATRIX_N, sizeof(int));
-
-    CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&d_int_A, MATRIX_M * MATRIX_K * sizeof(signed char)));
-    CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&d_int_B, MATRIX_K * MATRIX_N * sizeof(signed char)));
-    CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&c_int_wmma, MATRIX_M * MATRIX_N * sizeof(int)));
-#elif CUBLAS_HALF
-
-#if defined(BEER) || defined(ITUNES)
-    // if materialized view is required
-    short *h_short_A, *h_short_B;
-    h_short_A = (short*)calloc(MATRIX_M*MATRIX_K, sizeof(short));
-    h_short_B = (short*)calloc(MATRIX_N*MATRIX_K, sizeof(short));
-#endif
+// allocate device memory for inputs
+#ifdef CUBLAS_HALF
     
     long foreignKeySize = jNode->leftTable->attrTotalSize[jNode->leftKeyIndex];
     long primaryKeySize = sizeof(int) * jNode->rightTable->tupleNum;
@@ -1450,44 +489,11 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
 
 #else
     c_host_cublas = (float*)calloc(MATRIX_M*MATRIX_N, sizeof(float));
-    CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&c_cublas, (uint64_t)MATRIX_M * (uint64_t)MATRIX_N * sizeof(float)));
-    CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&d_fp16_A, (uint64_t)MATRIX_M * (uint64_t)MATRIX_K * sizeof(half)));
-    CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&d_fp16_B, (uint64_t)MATRIX_N * (uint64_t)MATRIX_K * sizeof(half)));
-    CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&d_fp16_BT, (uint64_t)MATRIX_K * (uint64_t)MATRIX_N * sizeof(half)));
+    CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&c_cublas,(uint64_t)MATRIX_M*(uint64_t)MATRIX_N*sizeof(float)));
+    CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&d_fp16_A,(uint64_t)MATRIX_M*(uint64_t)MATRIX_K*sizeof(half)));
+    CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&d_fp16_B,(uint64_t)MATRIX_N*(uint64_t)MATRIX_K*sizeof(half)));
+    CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&d_fp16_BT,(uint64_t)MATRIX_K*(uint64_t)MATRIX_N*sizeof(half)));
 #endif // end of OUTDEGREE
-
-#ifdef BEER
-    /* Beer dataset if require further projection */
-    h_id_A = (short*)calloc(MATRIX_M, sizeof(short));
-    h_beer_A = (short*)calloc(MATRIX_M, sizeof(short));
-    h_factory_A = (short*)calloc(MATRIX_M, sizeof(short));
-    h_style_A = (short*)calloc(MATRIX_M, sizeof(short));
-    h_abv_A = (short*)calloc(MATRIX_M, sizeof(short));
-    h_id_B = (short*)calloc(MATRIX_N, sizeof(short));
-    h_beer_B = (short*)calloc(MATRIX_N, sizeof(short));
-    h_factory_B = (short*)calloc(MATRIX_N, sizeof(short));
-    h_style_B = (short*)calloc(MATRIX_N, sizeof(short));
-    h_abv_B = (short*)calloc(MATRIX_N, sizeof(short));
-#elif ITUNES
-    h_id_A = (short*)calloc(MATRIX_M, sizeof(short)); 
-    h_id_B = (short*)calloc(MATRIX_N, sizeof(short));
-    h_song_A = (short*)calloc(MATRIX_M, sizeof(short));
-    h_song_B = (short*)calloc(MATRIX_N, sizeof(short));
-    h_artist_A = (short*)calloc(MATRIX_M, sizeof(short));
-    h_artist_B = (short*)calloc(MATRIX_N, sizeof(short));
-    h_album_A = (short*)calloc(MATRIX_M, sizeof(short));
-    h_album_B = (short*)calloc(MATRIX_N, sizeof(short));
-    h_genre_A = (short*)calloc(MATRIX_M, sizeof(short));
-    h_genre_B = (short*)calloc(MATRIX_N, sizeof(short));
-    h_price_A = (short*)calloc(MATRIX_M, sizeof(short));
-    h_price_B = (short*)calloc(MATRIX_N, sizeof(short));
-    h_copyright_A = (short*)calloc(MATRIX_M, sizeof(short));
-    h_copyright_B = (short*)calloc(MATRIX_N, sizeof(short));
-    h_time_A = (short*)calloc(MATRIX_M, sizeof(short));
-    h_time_B = (short*)calloc(MATRIX_N, sizeof(short));
-    h_released_A = (short*)calloc(MATRIX_M, sizeof(short));
-    h_released_B = (short*)calloc(MATRIX_N, sizeof(short));
-#endif
 
     h_red = (float*)calloc(MATRIX_N, sizeof(float));
     CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&d_red, MATRIX_N * sizeof(float)));
@@ -1515,68 +521,18 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
     CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&d_fp32_B, MATRIX_N * MATRIX_K * sizeof(float)));
     CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&d_fp32_BT, MATRIX_K * MATRIX_N * sizeof(float)));
     CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&c_sgemm, MATRIX_M * MATRIX_N * sizeof(float)));
-#else  //WMMA_HALF
-    h_fp32_A = (float*)calloc(MATRIX_M*MATRIX_K, sizeof(float));
-    h_fp32_B = (float*)calloc(MATRIX_K*MATRIX_N, sizeof(float));
-    c_host_wmma = (float*)calloc(MATRIX_M*MATRIX_N, sizeof(float));
-
-    CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&d_fp32_A, MATRIX_M * MATRIX_K * sizeof(float)));
-    CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void **)&d_fp32_B, MATRIX_K * MATRIX_N * sizeof(float)));
-    CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&d_fp16_A, MATRIX_M * MATRIX_K * sizeof(half)));
-    CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void **)&d_fp16_B, MATRIX_K * MATRIX_N * sizeof(half)));
-    CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&c_wmma, MATRIX_M * MATRIX_N * sizeof(float)));
-    CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&c_wmma_sum1, MATRIX_M * MATRIX_N * sizeof(float)));
-    CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&c_wmma_sum2, MATRIX_M * MATRIX_N * sizeof(float)));
-
-    // mask reduction
-    h_fp32_mask = (float*)calloc(MATRIX_M*MATRIX_N, sizeof(float));
-    h_fp32_mask2 = (float*)calloc(MATRIX_M*MATRIX_N, sizeof(float));
-    CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&d_fp32_mask, MATRIX_M * MATRIX_N * sizeof(float)));
-    CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&d_fp32_mask2, MATRIX_M * MATRIX_N * sizeof(float)));
-    CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&d_fp16_mask, MATRIX_M * MATRIX_N * sizeof(half)));
-    CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&d_fp16_mask2, MATRIX_M * MATRIX_N * sizeof(half)));
-    set_mask(h_fp32_mask, MATRIX_M, MATRIX_N);
-    set_mask2(h_fp32_mask2, MATRIX_M, MATRIX_N);
 #endif // end of initialization
     clock_gettime(CLOCK_REALTIME, &init_end);
 
-#ifdef WMMA_INT4
-    clock_gettime(CLOCK_REALTIME, &fill_start); 
-    tcu_match(jNode, MATRIX_K, h_int_A, h_int_B, jNode->leftTable->attrType[0], jNode->rightTable->attrType[0]);
-    clock_gettime(CLOCK_REALTIME, &fill_end); 
-#elif CUBLAS_HALF
+#ifdef CUBLAS_HALF
 // call different matrix filling methods according to dataset
-#ifdef BEER
-    beer_match(jNode, MATRIX_K,
-         h_short_A, h_short_B, 
-         jNode->leftTable->attrType[0], jNode->rightTable->attrType[0], 
-         jNode->leftTable->totalAttr, jNode->rightTable->totalAttr,
-         h_id_A, h_id_B,
-         h_beer_A, h_beer_B,
-         h_factory_A, h_factory_B,
-         h_style_A, h_style_B,
-         h_abv_A, h_abv_B);
-#elif ITUNES
-    itunes_match(jNode, MATRIX_K,
-         h_short_A, h_short_B, 
-         jNode->leftTable->attrType[0], jNode->rightTable->attrType[0], 
-         jNode->leftTable->totalAttr, jNode->rightTable->totalAttr,
-         h_id_A, h_id_B,
-         h_song_A, h_song_B,
-         h_artist_A, h_artist_B,
-         h_album_A, h_album_B,
-         h_genre_A, h_genre_B,
-         h_price_A, h_price_B,
-         h_copyright_A, h_copyright_B,
-         h_time_A, h_time_B,
-         h_released_A, h_released_B
-         );
-#elif MICRO
-    int A_tupleNum = jNode->leftTable->tupleNum;
-    int B_tupleNum = jNode->rightTable->tupleNum;
+#ifdef MICRO
+    //int A_tupleNum = jNode->leftTable->tupleNum;
+    //int leftTupleNum = jNode->leftTable->tupleNum;
+    //int B_tupleNum = jNode->rightTable->tupleNum;
+    //int rightTupleNum = jNode->rightTable->tupleNum;
+
     clock_gettime(CLOCK_REALTIME, &cuMemcpy_start);
-    //printf("A tuple#: %d\tB tuple#: %d\n", A_tupleNum, B_tupleNum);
-    //printf("left col index: %d\tright col index: %d\n", jNode->leftKeyIndex, jNode->rightKeyIndex);
     CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(gpu_fact,jNode->leftTable->content[jNode->leftKeyIndex], foreignKeySize,cudaMemcpyHostToDevice));
     CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(gpu_dim,jNode->rightTable->content[jNode->rightKeyIndex], primaryKeySize,cudaMemcpyHostToDevice));
     CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(gpu_fact_val,jNode->leftTable->content[1], foreignKeySize,cudaMemcpyHostToDevice));
@@ -1585,49 +541,47 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
 
     clock_gettime(CLOCK_REALTIME, &fill_start); 
     //microbenchmark<<<(MAX_THREADS+A_tupleNum-1)/MAX_THREADS,MAX_THREADS>>> (gpu_fact,
-    microbenchmark_new<<<(MAX_THREADS+A_tupleNum-1)/MAX_THREADS,MAX_THREADS>>> (gpu_fact,
+    microbenchmark_new<<<(MAX_THREADS+leftTupleNum-1)/MAX_THREADS,MAX_THREADS>>> (gpu_fact,
             gpu_fact_val,
             MATRIX_K,
             d_fp16_A,
-            A_tupleNum,
+            leftTupleNum,
             jNode->leftTable->attrType[jNode->leftKeyIndex]);
     cudaErrCheck(cudaFree(gpu_fact));
     //microbenchmark<<<(MAX_THREADS+B_tupleNum-1)/MAX_THREADS,MAX_THREADS>>> (gpu_dim,
-    microbenchmark_new<<<(MAX_THREADS+B_tupleNum-1)/MAX_THREADS,MAX_THREADS>>> (gpu_dim,
+    microbenchmark_new<<<(MAX_THREADS+rightTupleNum-1)/MAX_THREADS,MAX_THREADS>>> (gpu_dim,
             gpu_dim_val,
             MATRIX_K,
             d_fp16_B,
-            B_tupleNum,
+            rightTupleNum,
             jNode->rightTable->attrType[jNode->rightKeyIndex]);
     cudaErrCheck(cudaFree(gpu_dim));
 
     clock_gettime(CLOCK_REALTIME, &fill_end); 
-#elif OUTDEGREE
-    int A_tupleNum = jNode->leftTable->tupleNum;
-    int B_tupleNum = jNode->rightTable->tupleNum;
-    clock_gettime(CLOCK_REALTIME, &cuMemcpy_start);
+#elif OUTDEGREE // PageRank Q1
+    //int A_tupleNum = jNode->leftTable->tupleNum;
+    //int B_tupleNum = jNode->rightTable->tupleNum;
 
-    //CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(gpu_fact,jNode->leftTable->content[jNode->leftKeyIndex], foreignKeySize,cudaMemcpyHostToDevice));
-    //CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(gpu_dim,jNode->rightTable->content[jNode->rightKeyIndex], primaryKeySize,cudaMemcpyHostToDevice));
+    clock_gettime(CLOCK_REALTIME, &cuMemcpy_start);
     CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(gpu_fact_val,jNode->leftTable->content[1], foreignKeySize,cudaMemcpyHostToDevice));
     CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(gpu_dim_val,jNode->rightTable->content[1], primaryKeySize,cudaMemcpyHostToDevice));
-
     clock_gettime(CLOCK_REALTIME, &cuMemcpy_end);
-    outdegree_fill<<<(MAX_THREADS+B_tupleNum-1)/MAX_THREADS,MAX_THREADS>>> (gpu_dim_val,
-            d_fp16_B,
-            B_tupleNum,
-            jNode->rightTable->attrType[jNode->rightKeyIndex]);
 
     clock_gettime(CLOCK_REALTIME, &fill_start); 
-
-
+    outdegree_fill<<<(MAX_THREADS+leftTupleNum-1)/MAX_THREADS,MAX_THREADS>>> (gpu_fact_val,
+            d_fp16_A,
+            leftTupleNum,
+            jNode->leftTable->attrType[jNode->leftKeyIndex]);
+    outdegree_fill<<<(MAX_THREADS+rightTupleNum-1)/MAX_THREADS,MAX_THREADS>>> (gpu_dim_val,
+            d_fp16_B,
+            rightTupleNum,
+            jNode->rightTable->attrType[jNode->rightKeyIndex]);
     clock_gettime(CLOCK_REALTIME, &fill_end); 
 // end of OUTDEGREE to cudaMemcpy and filling matrix
 
-#else // matrix-multiplication join count
-    //tcu_match(jNode, MATRIX_K, h_short_A, h_short_B, jNode->leftTable->attrType[0], jNode->rightTable->attrType[0]);
-    int A_tupleNum = jNode->leftTable->tupleNum;
-    int B_tupleNum = jNode->rightTable->tupleNum;
+#else //  MM for join count
+    //int A_tupleNum = jNode->leftTable->tupleNum;
+    //int B_tupleNum = jNode->rightTable->tupleNum;
 
     // cudaMemcpyHostToDevice raw data->char *column
     clock_gettime(CLOCK_REALTIME, &cuMemcpy_start);
@@ -1640,73 +594,61 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
     int dimCol = jNode->rightOutputIndex[jNode->rightOutputAttrNum-1];
     CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(factVal,jNode->leftTable->content[factCol], foreignKeySize,cudaMemcpyHostToDevice));
     CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(dimVal,jNode->rightTable->content[dimCol], primaryKeySize,cudaMemcpyHostToDevice));
-#endif
+#endif // end of PageRank
     clock_gettime(CLOCK_REALTIME, &cuMemcpy_end);
 
-//    res->attrSize[0] = jNode->leftTable->attrSize[jNode->leftOutputIndex[0]]; 
-//    res->attrSize[1] = jNode->rightTable->attrSize[jNode->rightOutputIndex[0]]; 
+    clock_gettime(CLOCK_REALTIME, &fill_start);  // filling time (except for MICRO, OUTDEGREE)
+#ifdef PAGERANK // specifically design for PageRank
 
-    clock_gettime(CLOCK_REALTIME, &fill_start); 
-#ifdef PAGERANK // specifically design for pagerank
     if (gb->gbExp[0].func == SUM) { // 20, defined in common.h
-        pagerank<<<(MAX_THREADS+A_tupleNum-1)/MAX_THREADS,MAX_THREADS>>> (gpu_fact,
+        pagerank<<<(MAX_THREADS+leftTupleNum-1)/MAX_THREADS,MAX_THREADS>>> (gpu_fact,
                 factVal,
                 MATRIX_K,
                 d_fp16_A,
-                A_tupleNum,
+                leftTupleNum,
                 jNode->leftTable->attrType[jNode->leftKeyIndex],
                 jNode->leftTable->attrType[factCol],
                 pageRankAlpha); 
         cudaErrCheck(cudaFree(gpu_fact));
         cudaErrCheck(cudaFree(factVal));
 
-        pagerank<<<(MAX_THREADS+B_tupleNum-1)/MAX_THREADS,MAX_THREADS>>> (gpu_dim,
+        pagerank<<<(MAX_THREADS+rightTupleNum-1)/MAX_THREADS,MAX_THREADS>>> (gpu_dim,
                 dimVal,
                 MATRIX_K,
                 d_fp16_B,
-                B_tupleNum,
+                rightTupleNum,
                 jNode->rightTable->attrType[jNode->rightKeyIndex],
                 jNode->rightTable->attrType[dimCol],
                 1.0); 
         cudaErrCheck(cudaFree(gpu_dim));
         cudaErrCheck(cudaFree(dimVal));
 
-        CUDA_SAFE_CALL_NO_SYNC(cudaMemset(c_cublas, 0, (uint64_t)MATRIX_M * (uint64_t)MATRIX_N * sizeof(float)));
+        CUDA_SAFE_CALL_NO_SYNC(cudaMemset(c_cublas,0,(uint64_t)MATRIX_M*(uint64_t)MATRIX_N*sizeof(float)));
     }
-#else // other general query ask for join counts
-    gpu_fill<<<(MAX_THREADS+A_tupleNum-1)/MAX_THREADS,MAX_THREADS>>> (gpu_fact,
+#else // query ask for join counts except for OUTDEGREE, MICRO, PAGERANK
+    gpu_fill<<<(MAX_THREADS+leftTupleNum-1)/MAX_THREADS,MAX_THREADS>>> (gpu_fact,
             MATRIX_K,
             d_fp16_A,
-            A_tupleNum,
+            leftTupleNum,
             jNode->leftTable->attrType[jNode->leftKeyIndex]);
     cudaErrCheck(cudaFree(gpu_fact));
-    gpu_fill<<<(MAX_THREADS+B_tupleNum-1)/MAX_THREADS,MAX_THREADS>>> (gpu_dim,
+    gpu_fill<<<(MAX_THREADS+rightTupleNum-1)/MAX_THREADS,MAX_THREADS>>> (gpu_dim,
             MATRIX_K,
             d_fp16_B,
-            B_tupleNum,
+            rightTupleNum,
             jNode->rightTable->attrType[jNode->rightKeyIndex]);
-//    cudaErrCheck(cudaFree(gpu_dim));
+    cudaErrCheck(cudaFree(gpu_dim));
 #endif
     clock_gettime(CLOCK_REALTIME, &fill_end); 
-#endif // end of fill matrix start at L1450
+#endif // end of fill matrix for CUBLAS_HALF
 
-#elif WMMA_HALF  //WMMA_HALF or CUBLAS    
-    clock_gettime(CLOCK_REALTIME, &fill_start); 
-    tcu_match(jNode, MATRIX_K, h_fp32_A, h_fp32_B, jNode->leftTable->attrType[0], jNode->rightTable->attrType[0]);
-    clock_gettime(CLOCK_REALTIME, &fill_end); 
 #elif CUBLAS
-    /*    
-    // two matrices with all numbers perform MM
-    micro_mm(jNode, h_fp32_A, h_fp32_B, MATRIX_M,
-            jNode->leftTable->totalAttr, jNode->rightTable->totalAttr, 
-            jNode->leftTable->attrType[0], jNode->rightTable->attrType[0]);
-    */
+
 #ifdef MICRO
-    int A_tupleNum = jNode->leftTable->tupleNum;
-    int B_tupleNum = jNode->rightTable->tupleNum;
+    //int A_tupleNum = jNode->leftTable->tupleNum;
+    //int B_tupleNum = jNode->rightTable->tupleNum;
+
     clock_gettime(CLOCK_REALTIME, &cuMemcpy_start);
-    //printf("A tuple#: %d\tB tuple#: %d\n", A_tupleNum, B_tupleNum);
-    //printf("left col index: %d\tright col index: %d\n", jNode->leftKeyIndex, jNode->rightKeyIndex);
     CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(gpu_fact,jNode->leftTable->content[jNode->leftKeyIndex], foreignKeySize,cudaMemcpyHostToDevice));
     CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(gpu_dim,jNode->rightTable->content[jNode->rightKeyIndex], primaryKeySize,cudaMemcpyHostToDevice));
     CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(gpu_fact_val,jNode->leftTable->content[1], foreignKeySize,cudaMemcpyHostToDevice));
@@ -1714,35 +656,36 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
     clock_gettime(CLOCK_REALTIME, &cuMemcpy_end);
 
     clock_gettime(CLOCK_REALTIME, &fill_start); 
-    gpu_fill_mm<<<(MAX_THREADS+A_tupleNum-1)/MAX_THREADS,MAX_THREADS>>> (gpu_fact,
+    gpu_fill_mm<<<(MAX_THREADS+leftTupleNum-1)/MAX_THREADS,MAX_THREADS>>> (gpu_fact,
             gpu_fact_val,
             MATRIX_K,
             d_fp32_A,
-            A_tupleNum,
+            leftTupleNum,
             jNode->leftTable->attrType[jNode->leftKeyIndex]);
     cudaErrCheck(cudaFree(gpu_fact));
-    gpu_fill_mm<<<(MAX_THREADS+B_tupleNum-1)/MAX_THREADS,MAX_THREADS>>> (gpu_dim,
+    gpu_fill_mm<<<(MAX_THREADS+rightTupleNum-1)/MAX_THREADS,MAX_THREADS>>> (gpu_dim,
             gpu_dim_val,
             MATRIX_K,
             d_fp32_B,
-            B_tupleNum,
+            rightTupleNum,
             jNode->rightTable->attrType[jNode->rightKeyIndex]);
     cudaErrCheck(cudaFree(gpu_dim));
 
     clock_gettime(CLOCK_REALTIME, &fill_end); 
 #else
-    clock_gettime(CLOCK_REALTIME, &fill_start); 
-    tcu_match(jNode, MATRIX_K, h_fp32_A, h_fp32_B, jNode->leftTable->attrType[0], jNode->rightTable->attrType[0]);
-    clock_gettime(CLOCK_REALTIME, &fill_end); 
+    // No other modes for now
+
 #endif // end of MICRO
 
-#endif // all modes filling matrix end
+#endif // all modes (CUBLAS_HALF and CUBLAS) filling matrix end
 
+// set up mask for reduction if required
 clock_gettime(CLOCK_REALTIME, &maskRED_start); 
 #ifdef CUBLAS_HALF
 
 #ifdef MICRO
 // do nothing
+
 #else
 
     setVector(h_red, MATRIX_N);
@@ -1753,123 +696,61 @@ clock_gettime(CLOCK_REALTIME, &maskRED_start);
 #endif
 
 #endif // end of else MICRO
-
-#endif // maskRED for CUBLAS_HALF end
+#endif // end of setting mask for CUBLAS_HALF
 clock_gettime(CLOCK_REALTIME, &maskRED_end); 
 
-#ifdef WMMA_INT4
-    clock_gettime(CLOCK_REALTIME, &cuMemcpy_start);
-    CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(d_int_A, h_int_A, sizeof(signed char) * MATRIX_M * MATRIX_K, cudaMemcpyHostToDevice));
-    CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(d_int_B, h_int_B, sizeof(signed char) * MATRIX_K * MATRIX_N, cudaMemcpyHostToDevice));
-    clock_gettime(CLOCK_REALTIME, &cuMemcpy_ebd);
-#elif WMMA_HALF
-    clock_gettime(CLOCK_REALTIME, &cuMemcpy_start);
-    CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(d_fp32_A, h_fp32_A, sizeof(float) * MATRIX_M * MATRIX_K, cudaMemcpyHostToDevice));
-    CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(d_fp32_B, h_fp32_B, sizeof(float) * MATRIX_K * MATRIX_N, cudaMemcpyHostToDevice));
-    clock_gettime(CLOCK_REALTIME, &cuMemcpy_end);
-
-    convertFp32ToFp16<<< (MATRIX_M * MATRIX_K + 255) / 256, 256 >>> (d_fp16_A, d_fp32_A, MATRIX_M * MATRIX_K);
-    cudaErrCheck(cudaFree(d_fp32_A));
-    convertFp32ToFp16<<< (MATRIX_K * MATRIX_N + 255) / 256, 256 >>> (d_fp16_B, d_fp32_B, MATRIX_K * MATRIX_N);
-    cudaErrCheck(cudaFree(d_fp32_B));
-    //CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(d_fp32_mask, h_fp32_mask, sizeof(float) * MATRIX_M * MATRIX_N, cudaMemcpyHostToDevice));
-    //convertFp32ToFp16<<< (MATRIX_N * MATRIX_K + 255) / 256, 256 >>> (d_fp16_mask, d_fp32_mask, MATRIX_M * MATRIX_N);
-    //cudaErrCheck(cudaFree(d_fp32_mask));
-    //CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(d_fp32_mask2, h_fp32_mask2, sizeof(float) * MATRIX_M * MATRIX_N, cudaMemcpyHostToDevice));
-    //convertFp32ToFp16<<< (MATRIX_N * MATRIX_K + 255) / 256, 256 >>> (d_fp16_mask2, d_fp32_mask2, MATRIX_M * MATRIX_N);
-    //cudaErrCheck(cudaFree(d_fp32_mask2));
-#elif CUBLAS_HALF
+// transpose B matrix
+#ifdef CUBLAS_HALF
 
 #ifdef OUTDEGREE
+    //outdegree doesn't need to transpose
+#elif MICRO
+    //microbenchmark doesn't need to transpose
 #else    
     clock_gettime(CLOCK_REALTIME, &transpose_start);
-    // FIXME: microbenchmark doesn't need to transpose
     gpu_transpose<<< (MATRIX_N * MATRIX_K + 255) / 256, 256 >>> (d_fp16_BT, d_fp16_B, MATRIX_N, MATRIX_K);
     clock_gettime(CLOCK_REALTIME, &transpose_end);
-#endif // end of OUTDEGREE -- transpose B mat
+    cudaErrCheck(cudaFree(d_fp16_B));
+#endif // end of OUTDEGREE -- transpose B matrix
 
-    //cudaErrCheck(cudaFree(d_fp16_B));
 #elif CUBLAS
-
-    /*
-    clock_gettime(CLOCK_REALTIME, &cuMemcpy_start);
-    CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(d_fp32_A, h_fp32_A, sizeof(float) * MATRIX_M * MATRIX_K, cudaMemcpyHostToDevice));
-    CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(d_fp32_B, h_fp32_B, sizeof(float) * MATRIX_N * MATRIX_K, cudaMemcpyHostToDevice));
-    clock_gettime(CLOCK_REALTIME, &cuMemcpy_end);
-    */
 
     clock_gettime(CLOCK_REALTIME, &transpose_start);
     gpu_transpose<<< (MATRIX_N * MATRIX_K + 255) / 256, 256 >>> (d_fp32_BT, d_fp32_B, MATRIX_N, MATRIX_K);
     clock_gettime(CLOCK_REALTIME, &transpose_end);
-
     cudaErrCheck(cudaFree(d_fp32_B));
-#endif
+#endif // end of transposing B matrix
 
-#ifdef WMMA_HALF 
-    printf("\nM = %d, N = %d, K = %d. alpha = %.2f, beta = %.2f\n\n", MATRIX_M, MATRIX_N, MATRIX_K, alpha, beta);
-
-    printf("Running with wmma...\n");
-    cudaErrCheck(cudaEventRecord(startWMMA));
-    wmma_example <<< gridDim, blockDim >>> (d_fp16_A, d_fp16_B, c_wmma, MATRIX_M, MATRIX_N, MATRIX_K, alpha, beta); 
-    cudaErrCheck(cudaFree(d_fp16_A));
-    cudaErrCheck(cudaFree(d_fp16_B));
-    // TODO: mask for WMMA has some bugs, memory address misaligned 
-    // perform additional two wmma for reduction, sum will be c_host_wmma[0]
-    /*
-    half *c_wmma_reduction1, *c_wmma_reduction2;
-    CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void **)&c_wmma_reduction1, MATRIX_M * MATRIX_N * sizeof(half)));
-    CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void **)&c_wmma_reduction2, MATRIX_M * MATRIX_N * sizeof(half)));
-    convertFp32ToFp16<<< (MATRIX_M * MATRIX_N + 255) / 256, 256 >>> (c_wmma_reduction1, c_wmma, MATRIX_M * MATRIX_N);
-
-    wmma_example <<< gridDim, blockDim >>> (d_fp16_mask2, c_wmma_reduction1, c_wmma_sum1, MATRIX_M, MATRIX_N, MATRIX_M, alpha, beta); 
-    convertFp32ToFp16<<< (MATRIX_M * MATRIX_N + 255) / 256, 256 >>> (c_wmma_reduction2, c_wmma_sum1, MATRIX_M * MATRIX_N);
-
-    wmma_example <<< gridDim, blockDim >>> (d_fp16_mask2, c_wmma_reduction2, c_wmma_sum2, MATRIX_M, MATRIX_N, MATRIX_M, alpha, beta); 
-    */
-    cudaErrCheck(cudaFree(d_fp16_mask2));
-    cudaErrCheck(cudaEventRecord(stopWMMA));
-
-#elif WMMA_INT4
-    printf("\nM = %d, N = %d, K = %d. alpha = %d, beta = %d\n\n", MATRIX_M, MATRIX_N, MATRIX_K, alpha, beta);
-
-    printf("Running with wmma_INT4...\n");
-    cudaErrCheck(cudaEventRecord(startWMMA));
-    wmma_int <<< gridDim, blockDim >>> (d_int_A, d_int_B, c_int_wmma, MATRIX_M, MATRIX_N, MATRIX_K, 1, 0); 
-    cudaErrCheck(cudaFree(d_int_A));
-    cudaErrCheck(cudaFree(d_int_B));
-    cudaErrCheck(cudaEventRecord(stopWMMA));
-
-#elif CUBLAS_HALF
+// start cublasGemm lib to perform MM
+#ifdef CUBLAS_HALF
 
 #ifdef MICRO
-    printf("Running with cuBLAS on with tensor op...\n");
+    printf("Running MICROBENCHMARK using GemmEx with TCUs...\n");
     cudaErrCheck(cudaEventRecord(startcublasEX));
     cublasErrCheck(cublasGemmEx(cublasHandle, CUBLAS_OP_N, CUBLAS_OP_N,
                 MATRIX_N, MATRIX_M, MATRIX_K,
                 &alpha,
-                //d_fp16_BT, CUDA_R_16F, MATRIX_N,
                 d_fp16_B, CUDA_R_16F, MATRIX_N,
                 d_fp16_A, CUDA_R_16F, MATRIX_K,
                 &beta,
                 c_cublas, CUDA_R_32F, MATRIX_N,
-                //CUDA_R_32F, CUBLAS_GEMM_DFALT_TENSOR_OP)); // tcu
                 CUBLAS_COMPUTE_32F, CUBLAS_GEMM_DEFAULT_TENSOR_OP)); // CUDA 11
+    cudaErrCheck(cudaFree(d_fp16_A));
+    cudaErrCheck(cudaFree(d_fp16_B));
 
 #elif OUTDEGREE
-    printf("Running compute_outdegree with cuBLAS on with tensor op...\n");
-    clock_gettime(CLOCK_REALTIME, &test_start);
-    //cudaErrCheck(cudaEventRecord(startcublasEX));
+    printf("Running compute_outdegree with GemmEx with TCUs...\n");
+    cudaErrCheck(cudaEventRecord(startcublasEX));
     cublasErrCheck(cublasGemmEx(cublasHandle, CUBLAS_OP_N, CUBLAS_OP_N,
                 MATRIX_M, MATRIX_M, 1,
                 &alpha,
-                //d_fp16_BT, CUDA_R_16F, MATRIX_N,
                 d_fp16_B, CUDA_R_16F, MATRIX_M,
                 d_fp16_A, CUDA_R_16F, 1,
                 &beta,
                 c_cublas, CUDA_R_32F, MATRIX_M,
-                //CUDA_R_32F, CUBLAS_GEMM_DFALT_TENSOR_OP)); // tcu
                 CUBLAS_COMPUTE_32F, CUBLAS_GEMM_DEFAULT_TENSOR_OP)); // CUDA 11
-    clock_gettime(CLOCK_REALTIME, &test_end);
+    cudaErrCheck(cudaFree(d_fp16_A));
+    cudaErrCheck(cudaFree(d_fp16_B));
 
 // end of OUTDEGREE tcu cublasEX
 #else
@@ -1887,7 +768,7 @@ clock_gettime(CLOCK_REALTIME, &maskRED_end);
     CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void **)&red_sum2, 1 * sizeof(float)));
 #endif
     CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&c_fp16_cublas, (uint64_t)MATRIX_M * (uint64_t)MATRIX_N * sizeof(half)));
-    printf("Running with cuBLAS on TCUs...\n");
+    //printf("Running with cuBLAS on TCUs...\n");
     cudaErrCheck(cudaEventRecord(startcublasEX));
 /*    cublasErrCheck(cublasHgemm(cublasHandle, CUBLAS_OP_N, CUBLAS_OP_N,
                 MATRIX_N, MATRIX_M, MATRIX_K,
@@ -1897,6 +778,7 @@ clock_gettime(CLOCK_REALTIME, &maskRED_end);
                 &beta_fp16,
                 c_fp16_cublas, MATRIX_N));*/
 #ifdef RED    
+    printf("Running GemmEx RED on TCUs...\n");
     cublasErrCheck(cublasGemmEx(cublasHandle, CUBLAS_OP_N, CUBLAS_OP_N,
                 MATRIX_N, MATRIX_M, MATRIX_K,
                 &alpha,
@@ -1906,10 +788,13 @@ clock_gettime(CLOCK_REALTIME, &maskRED_end);
                 c_cublas, CUDA_R_32F, MATRIX_N,
                 //CUDA_R_32F, CUBLAS_GEMM_DFALT_TENSOR_OP)); // tcu
                 CUBLAS_COMPUTE_32F, CUBLAS_GEMM_DEFAULT_TENSOR_OP)); // CUDA 11
+    cudaErrCheck(cudaFree(d_fp16_A));
+    cudaErrCheck(cudaFree(d_fp16_BT));
 #else
     // NOTE: YDB's groupby is not group by clause but aggregate function
     // outdegree.sql, gb->gbExp[0].func == DESC
     if (gb && gb->gbExp[1].func == COUNT) {
+        printf("Running GemmEx COUNT on TCUs...\n");
         cublasErrCheck(cublasGemmEx(cublasHandle, CUBLAS_OP_N, CUBLAS_OP_N,
                 MATRIX_N, MATRIX_M, MATRIX_K,
                 &alpha,
@@ -1919,6 +804,8 @@ clock_gettime(CLOCK_REALTIME, &maskRED_end);
                 c_cublas, CUDA_R_32F, MATRIX_N,
                 //CUDA_R_32F, CUBLAS_GEMM_DFALT_TENSOR_OP)); // tcu
                 CUBLAS_COMPUTE_32F, CUBLAS_GEMM_DEFAULT_TENSOR_OP)); // CUDA 11
+        cudaErrCheck(cudaFree(d_fp16_A));
+        cudaErrCheck(cudaFree(d_fp16_BT));
 
         clock_gettime(CLOCK_REALTIME, &gbCount_start);
         cublasErrCheck(cublasGemmEx(cublasHandle, CUBLAS_OP_N, CUBLAS_OP_N,
@@ -1952,6 +839,7 @@ clock_gettime(CLOCK_REALTIME, &maskRED_end);
                 &beta_fp16,
                 c_fp16_cublas, MATRIX_N));
         */
+        printf("Running GemmEx SUM (PR) on TCUs...\n");
         cublasErrCheck(cublasGemmEx(cublasHandle, CUBLAS_OP_N, CUBLAS_OP_N,
                 MATRIX_N, MATRIX_M, MATRIX_K,
                 &alpha,
@@ -1961,6 +849,8 @@ clock_gettime(CLOCK_REALTIME, &maskRED_end);
                 c_cublas, CUDA_R_32F, MATRIX_N,
                 //CUDA_R_32F, CUBLAS_GEMM_DFALT_TENSOR_OP)); // tcu
                 CUBLAS_COMPUTE_32F, CUBLAS_GEMM_DEFAULT_TENSOR_OP)); // CUDA 11
+        cudaErrCheck(cudaFree(d_fp16_A));
+        cudaErrCheck(cudaFree(d_fp16_BT));
 
         pageRankAdd<<< (MATRIX_M * MATRIX_N + 255) / 256, 256 >>> (c_cublas, MATRIX_M*MATRIX_N, pageRankAlpha, MATRIX_K);
         // verify result
@@ -1969,7 +859,7 @@ clock_gettime(CLOCK_REALTIME, &maskRED_end);
         verify_result(c_host_cublas, MATRIX_M, MATRIX_N);
         */  
     } else {
-
+        printf("Running Hgemm...\n");
         // no group by keyword, directly perform cublasHgemm
         cublasErrCheck(cublasHgemm(cublasHandle, CUBLAS_OP_N, CUBLAS_OP_N,
                 MATRIX_N, MATRIX_M, MATRIX_K,
@@ -1978,18 +868,19 @@ clock_gettime(CLOCK_REALTIME, &maskRED_end);
                 d_fp16_A,MATRIX_K,
                 &beta_fp16,
                 c_fp16_cublas, MATRIX_N));
+        cudaErrCheck(cudaFree(d_fp16_A));
+        cudaErrCheck(cudaFree(d_fp16_BT));
     }
 //    res->attrTotalSize[2] = 4*MATRIX_M*MATRIX_N;
 #endif // end of RED TCU operation
 
-#endif // end of MICRO
-    // cudaFree inputs
-//    cudaErrCheck(cudaFree(d_fp16_A));
-//    cudaErrCheck(cudaFree(d_fp16_BT));
+#endif // end of MICRO -- L727
+    cudaErrCheck(cudaEventRecord(stopcublasEX));
 
-#if defined(RED) // reduction to get correct join counts
+#ifdef RED // reduction to get correct join counts
     clock_gettime(CLOCK_REALTIME, &gbCount_start);
     // 1st reduction
+    // res should come from L788
     cublasErrCheck(cublasGemmEx(cublasHandle, CUBLAS_OP_N, CUBLAS_OP_N,
                 1, MATRIX_M, MATRIX_N,
                 &alpha,
@@ -2002,7 +893,7 @@ clock_gettime(CLOCK_REALTIME, &maskRED_end);
 
     // return groupBy count
     if (gb && gb->gbExp[1].func == COUNT) {
-        // FIXME: why red_sum is 0
+        // FIXME: why red_sum is 0, gb_count check 0.0 or 0?
         gb_count<<<(MATRIX_M + 255) / 256, 256>>> (red_sum, MATRIX_M, gbCount);
     }
     
@@ -2018,11 +909,13 @@ clock_gettime(CLOCK_REALTIME, &maskRED_end);
                 //CUDA_R_32F, CUBLAS_GEMM_DFALT_TENSOR_OP)); // tcu
                 CUBLAS_COMPUTE_32F, CUBLAS_GEMM_DEFAULT_TENSOR_OP)); // CUDA 11
     clock_gettime(CLOCK_REALTIME, &gbCount_end);
+    cudaErrCheck(cudaFree(red_sum));
+    cudaErrCheck(cudaFree(d_red2));
     
 #endif
-    cudaErrCheck(cudaEventRecord(stopcublasEX));
+//    cudaErrCheck(cudaEventRecord(stopcublasEX));
 #elif CUBLAS
-    printf("Running with sgemm...\n");
+    printf("Running with SGemm...\n");
     cudaErrCheck(cudaEventRecord(startcublas));
     cublasSgemm(cublasHandle_default, CUBLAS_OP_N, CUBLAS_OP_N,
             MATRIX_N, MATRIX_M, MATRIX_K,
@@ -2035,59 +928,12 @@ clock_gettime(CLOCK_REALTIME, &maskRED_end);
     cudaErrCheck(cudaFree(d_fp32_A));
     cudaErrCheck(cudaFree(d_fp32_BT));
 #endif    
-    //cudaErrCheck(cudaFree(d_red));
-#ifdef RED
-    cudaErrCheck(cudaFree(d_red2));
-#endif
-
-#ifdef WMMA_HALF
-    struct timespec tmp_start, tmp_end;
-    clock_gettime(CLOCK_REALTIME, &tmp_start);
-    cudaErrCheck(cudaMemcpy(c_host_wmma, c_wmma, MATRIX_M * MATRIX_N * sizeof(float), cudaMemcpyDeviceToHost));
-    cudaErrCheck(cudaFree(c_wmma));
-    printf("Number of join results (MM reduction): %.0f\n", c_host_wmma[0]);
-    printf("Number of join results (CPU count): %d\n", sum_matrix(c_host_wmma, MATRIX_M, MATRIX_N));
-    clock_gettime(CLOCK_REALTIME, &tmp_end);
-#elif WMMA_INT4
-    struct timespec tmp_start, tmp_end;
-    clock_gettime(CLOCK_REALTIME, &tmp_start);
-    cudaErrCheck(cudaMemcpy(c_host_int_wmma, c_int_wmma, MATRIX_M * MATRIX_N * sizeof(float), cudaMemcpyDeviceToHost));
-    cudaErrCheck(cudaFree(c_int_wmma));
-    printf("Number of join results (CPU count): %d\n", sum_matrix_int(c_host_int_wmma, MATRIX_M, MATRIX_N));
-    clock_gettime(CLOCK_REALTIME, &tmp_end);
-#endif
 
 #ifdef CUBLAS_HALF
     float cublasEXTime;
 
     cudaErrCheck(cudaEventSynchronize(stopcublasEX));
     cudaErrCheck(cudaEventElapsedTime(&cublasEXTime, startcublasEX, stopcublasEX));
-    // retrieve other attributes from c_host_cublas given indices
-#ifdef BEER
-    /*
-    attrProjection(c_host_cublas, MATRIX_M, MATRIX_N,
-            jNode,
-            h_id_A, h_id_B,
-            h_beer_A, h_beer_B,
-            h_factory_A, h_factory_B,
-            h_style_A, h_style_B,
-            h_abv_A, h_abv_B);
-            */
-#elif ITUNES
-   /* 
-    attrProjection(c_host_cublas, MATRIX_M, MATRIX_N,
-            jNode,
-            h_id_A, h_id_B,
-            h_song_A, h_song_B,
-            h_artist_A, h_artist_B,
-            h_album_A, h_album_B,
-            h_genre_A, h_genre_B,
-            h_price_A, h_price_B,
-            h_copyright_A, h_copyright_B,
-            h_time_A, h_time_B,
-            h_released_A, h_released_B);
-            */
-#endif
 
 #ifdef RED
     clock_gettime(CLOCK_REALTIME, &count_start);
@@ -2164,10 +1010,8 @@ clock_gettime(CLOCK_REALTIME, &maskRED_end);
 #endif
     printf("cublasEX tensor cores (FP16) took %fms\n", cublasEXTime);
     
-//    cudaErrCheck(cudaEventDestroy(startcublasEX));
-//    cudaErrCheck(cudaEventDestroy(stopcublasEX));
     free(c_host_cublas);
-//    cudaErrCheck(cudaFree(c_cublas));
+    cudaErrCheck(cudaFree(c_cublas));
 #elif CUBLAS
     float cublasTime;
 
@@ -2191,33 +1035,12 @@ clock_gettime(CLOCK_REALTIME, &maskRED_end);
     cudaErrCheck(cudaEventDestroy(stopcublas));
     free(c_host_sgemm);
     cudaErrCheck(cudaFree(c_sgemm));
-#else
-    float wmmaTime;
 
-    cudaErrCheck(cudaEventSynchronize(stopWMMA));
-    cudaErrCheck(cudaEventElapsedTime(&wmmaTime, startWMMA, stopWMMA));
-    printf("wmma took %fms\n", wmmaTime);
-
-    cudaErrCheck(cudaEventDestroy(startWMMA));
-    cudaErrCheck(cudaEventDestroy(stopWMMA));
 #endif
 
 // free those data structures
-#ifdef WMMA_HALF
-    free(h_fp32_A);
-    free(h_fp32_B);
-    free(h_fp32_mask2);
-    free(c_host_wmma);
-#elif WMMA_INT4
-    free(h_int_A);
-    free(h_int_B);
-    free(c_host_int_wmma);
-#elif CUBLAS_HALF
+#ifdef CUBLAS_HALF
 
-#if defined(BEER) || defined(ITUNES)
-    free(h_short_A);
-    free(h_short_B);
-#endif
 
 #elif CUBLAS
     free(h_fp32_A);
@@ -2236,40 +1059,23 @@ clock_gettime(CLOCK_REALTIME, &maskRED_end);
     double transpose_elapse = (transpose_end.tv_sec -  transpose_start.tv_sec)* BILLION + transpose_end.tv_nsec - transpose_start.tv_nsec;
 #endif
 
-#ifdef BEER
-    double beerFill_elapse = (beerFill_end.tv_sec -  beerFill_start.tv_sec)* BILLION + beerFill_end.tv_nsec - beerFill_start.tv_nsec;
-#elif ITUNES
-    double itunesFill_elapse = (itunesFill_end.tv_sec -  itunesFill_start.tv_sec)* BILLION + itunesFill_end.tv_nsec - itunesFill_start.tv_nsec;
-#elif PAGERANK
+#ifdef PAGERANK
     double pagerankVerify_elapse = (pagerankVerify_end.tv_sec -  pagerankVerify_start.tv_sec)* BILLION + pagerankVerify_end.tv_nsec - pagerankVerify_start.tv_nsec;
-#endif
-#ifdef WMMA_HALF
-    double tmp_elapse = (tmp_end.tv_sec -  tmp_start.tv_sec)* BILLION + tmp_end.tv_nsec - tmp_start.tv_nsec;
 #endif
     
     printf("Initialization: %lf(ms)\n", init_elapse/(1000*1000));
     printf("Matrices filling: %lf(ms)\n", tcu_fill/(1000*1000));
-    //printf("Data type convertion: %lf(ms)\n", tcu_convert/(1000*1000));
     printf("cudaMemcpy: %lf(ms)\n", cuMemcpy_elapse/(1000*1000));
     printf("MMA total time: %lf(ms)\n", tcu_elapse/(1000*1000));
-    //double test_elapse = (test_end.tv_sec -  test_start.tv_sec)* BILLION + test_end.tv_nsec - test_start.tv_nsec;
-    //printf("cublasEX join time: %lf(ms)\n", test_elapse/(1000*1000));
 #ifdef CUBLAS_HALF
 
 if (gb && (gb->gbExp[1].func == COUNT || gb->gbExp[0].func == COUNT)) {
-    //double test_elapse = (test_end.tv_sec -  test_start.tv_sec)* BILLION + test_end.tv_nsec - test_start.tv_nsec;
     //printf("cublasEX join time: %lf(ms)\n", test_elapse/(1000*1000));
     printf("cublasEX sum counting: %lf(ms)\n", count_elapse/(1000*1000));
 }
     printf("cublasCreate cold start: %lf(ms)\n", debug_elapse/(1000*1000));
     printf("gpu transpose: %lf(ms)\n", transpose_elapse/(1000*1000));
-#ifdef BEER
-    printf("Beer filling time: %lf(ms)\n", beerFill_elapse/(1000*1000));
-    printf("cublasEX sum counting: %lf(ms)\n", count_elapse/(1000*1000));
-#elif ITUNES
-    printf("iTunes filling time: %lf(ms)\n", itunesFill_elapse/(1000*1000));
-    printf("cublasEX sum counting: %lf(ms)\n", count_elapse/(1000*1000));
-#elif PAGERANK
+#ifdef PAGERANK
     printf("PageRank Verify cudaMemcpy time: %lf(ms)\n", pagerankVerify_elapse/(1000*1000));
 #endif
 
@@ -2277,8 +1083,6 @@ if (gb && (gb->gbExp[1].func == COUNT || gb->gbExp[0].func == COUNT)) {
     //printf("cublasSGEMM sum counting: %lf(ms)\n", count_elapse/(1000*1000));
     printf("cublasCreate cold start: %lf(ms)\n", debug_elapse/(1000*1000));
     printf("gpu transpose: %lf(ms)\n", transpose_elapse/(1000*1000));
-#elif WMMA_HALF
-    printf("Result verification: %lf(ms)\n", tmp_elapse/(1000*1000));
 #endif
 //#ifdef DEBUG
     //cudaPrintfDisplay(stdout, true);

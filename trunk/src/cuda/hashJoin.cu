@@ -798,6 +798,7 @@ struct tableNode * hashJoin(struct joinNode *jNode, struct statistic *pp){
     struct tableNode * res = NULL;
 
     char *gpu_result = NULL, *gpu_bucket = NULL, *gpu_fact = NULL, *gpu_dim = NULL;
+//    uint64_t *gpu_count = NULL, *gpu_psum = NULL, *gpu_resPsum = NULL, *gpu_hashNum = NULL;
     int *gpu_count = NULL,  *gpu_psum = NULL, *gpu_resPsum = NULL, *gpu_hashNum = NULL;
 
     int defaultBlock = 4096;
@@ -879,6 +880,7 @@ struct tableNode * hashJoin(struct joinNode *jNode, struct statistic *pp){
     NP2(hsize); // return hsize the nearest power of 2
 
     //printf("after NP2 function hsize: %d\n", hsize); // 8
+//    CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&gpu_hashNum,sizeof(uint64_t)*hsize));
     CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&gpu_hashNum,sizeof(int)*hsize));
     CUDA_SAFE_CALL_NO_SYNC(cudaMemset(gpu_hashNum,0,sizeof(int)*hsize));
 
@@ -917,6 +919,8 @@ struct tableNode * hashJoin(struct joinNode *jNode, struct statistic *pp){
 
     CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&gpu_count,sizeof(int)*threadNum));
     CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&gpu_resPsum,sizeof(int)*threadNum));
+//    CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&gpu_count,sizeof(uint64_t)*threadNum));
+//    CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&gpu_resPsum,sizeof(uint64_t)*threadNum));
 
     int *gpuFactFilter = NULL;
     int *newFactFilter = NULL; // a[x][y] -> a[x*dim_size+y], x: left table's row id, dim_size: right table's tupleNum, y: right table's row id

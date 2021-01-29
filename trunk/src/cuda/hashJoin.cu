@@ -73,7 +73,7 @@ void cublasErrCheck_(cublasStatus_t stat, const char *file, int line) {
 /*
  * Count the number of dimension keys for each bucket.
  */
-
+typedef long int int64_t;
 __global__ static void count_hash_num(char *dim, long  inNum,int *num,int hsize){
     int stride = blockDim.x * gridDim.x;
     int offset = blockIdx.x * blockDim.x + threadIdx.x;
@@ -933,6 +933,7 @@ struct tableNode * hashJoin(struct joinNode *jNode, struct statistic *pp){
     //printf("left attrSize: %d\n", jNode->leftTable->attrSize[jNode->leftKeyIndex]);
     //printf("left keyIndex: %d\n", jNode->leftKeyIndex);
     long newSize = jNode->rightTable->tupleNum * jNode->leftTable->tupleNum * sizeof(int); // worst case is all matched
+//    uint64_t newSize = jNode->rightTable->tupleNum * jNode->leftTable->tupleNum * sizeof(int); // worst case is all matched
     //printf("newSize: %d\n", (int)newSize);
     int right_tupleNum = jNode->rightTable->tupleNum;
     //printf("join on index: %d\n", jNode->leftKeyIndex);

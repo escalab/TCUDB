@@ -392,8 +392,8 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
     printf("MATRIX_K: %lu\n", MATRIX_K);
 */
 #ifdef PAGERANK
-    printf("PageRank Alpha: %.3f\n", pageRankAlpha);
-    printf("(1-alpha)/#node: %.6f\n", (1-pageRankAlpha)/MATRIX_K);
+    //printf("PageRank Alpha: %.3f\n", pageRankAlpha);
+    //printf("(1-alpha)/#node: %.6f\n", (1-pageRankAlpha)/MATRIX_K);
 #endif
 
 
@@ -626,7 +626,8 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
         pagerank<<<(MAX_THREADS+rightTupleNum-1)/MAX_THREADS,MAX_THREADS>>> (gpu_dim,
                 dimVal,
                 MATRIX_K,
-                d_fp16_B,
+//                d_fp16_B,
+                d_fp16_BT,
                 rightTupleNum,
                 jNode->rightTable->attrType[jNode->rightKeyIndex],
                 jNode->rightTable->attrType[dimCol],

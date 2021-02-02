@@ -38,6 +38,7 @@
 //#include "../include/cuPrintf.cu"
 //#include "../include/cuPrintf.cuh"
 //#endif
+#include <pthread.h>
 
 using namespace nvcuda;
 
@@ -59,6 +60,14 @@ void cublasErrCheck_(cublasStatus_t stat, const char *file, int line) {
     }
 }
 #endif
+
+void* cublasCreateThread(void *x)
+{
+    cublasHandle_t* cublasHandle = (cublasHandle_t *)x;
+    cublasErrCheck(cublasCreate(cublasHandle));
+    cublasErrCheck(cublasSetMathMode(*cublasHandle, CUBLAS_TENSOR_OP_MATH));
+    return NULL;
+}
 
 __global__ static void count_op(float *red_sum, int length) {
     int i = blockDim.x * blockIdx.x + threadIdx.x;
@@ -439,11 +448,21 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
 
     cudaErrCheck(cudaEventCreate(&startcublasEX));
     cudaErrCheck(cudaEventCreate(&stopcublasEX));
-
+#ifdef THREAD
+    pthread_t thread;
+    clock_gettime(CLOCK_REALTIME, &debug_start);
+    pthread_create(&thread, NULL, cublasCreateThread, &cublasHandle);
+    clock_gettime(CLOCK_REALTIME, &debug_end);
+#else
     clock_gettime(CLOCK_REALTIME, &debug_start);
     cublasErrCheck(cublasCreate(&cublasHandle));
     clock_gettime(CLOCK_REALTIME, &debug_end);
     cublasErrCheck(cublasSetMathMode(cublasHandle, CUBLAS_TENSOR_OP_MATH));
+#endif
+//    clock_gettime(CLOCK_REALTIME, &debug_start);
+    //cublasErrCheck(cublasCreate(&cublasHandle));
+//    clock_gettime(CLOCK_REALTIME, &debug_end);
+    //cublasErrCheck(cublasSetMathMode(cublasHandle, CUBLAS_TENSOR_OP_MATH));
 
 #elif CUBLAS // SGEMM
     float *h_fp32_A, *h_fp32_B;             // host float32 array
@@ -594,6 +613,10 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
     //int A_tupleNum = jNode->leftTable->tupleNum;
     //int B_tupleNum = jNode->rightTable->tupleNum;
 
+//#ifdef THREAD
+//    pthread_join(thread, NULL);
+//#endif
+
     // cudaMemcpyHostToDevice raw data->char *column
     clock_gettime(CLOCK_REALTIME, &cuMemcpy_start);
     CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(gpu_fact,jNode->leftTable->content[jNode->leftKeyIndex], foreignKeySize,cudaMemcpyHostToDevice));
@@ -658,7 +681,11 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
     */
     cudaErrCheck(cudaFree(gpu_dim));
 #endif
+#ifdef THREAD
+    pthread_join(thread, NULL);
+#endif
     clock_gettime(CLOCK_REALTIME, &fill_end); 
+
 #endif // end of fill matrix for CUBLAS_HALF
 
 #elif CUBLAS
@@ -1080,6 +1107,11 @@ clock_gettime(CLOCK_REALTIME, &maskRED_end);
     double debug_elapse = (debug_end.tv_sec -  debug_start.tv_sec)* BILLION + debug_end.tv_nsec - debug_start.tv_nsec;
     double transpose_elapse = (transpose_end.tv_sec -  transpose_start.tv_sec)* BILLION + transpose_end.tv_nsec - transpose_start.tv_nsec;
 #endif
+
+//#ifdef THREAD
+//    double debug_ = (debug_end.tv_sec -  debug_start.tv_sec)* BILLION + debug_end.tv_nsec - debug_start.tv_nsec;
+//    printf("cublasCreate cold start: %lf(ms)\n", debug_/(1000*1000));
+//#endif
 
 #ifdef PAGERANK
     double pagerankVerify_elapse = (pagerankVerify_end.tv_sec -  pagerankVerify_start.tv_sec)* BILLION + pagerankVerify_end.tv_nsec - pagerankVerify_start.tv_nsec;

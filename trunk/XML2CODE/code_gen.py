@@ -466,7 +466,8 @@ def get_tables(tree, joinAttr, aggNode, orderbyNode):
                         leftIndex.append(newExp.column_name)
 
                     elif joinType == 2: # TCU join
-                        leftIndex.append(exp.column_name)
+                        leftIndex.append(exp.column_name) # ref to ystree.py gen_column_index
+                        # it seems to generate index for select_list first
 
                     leftAttr.append(colAttr)
                     leftPos.append(index)
@@ -486,6 +487,7 @@ def get_tables(tree, joinAttr, aggNode, orderbyNode):
                     rightAttr.append(colAttr)
                     rightPos.append(index)
 
+        # this is where decides the column index in joinNode
         outList= []
         outList.append(leftIndex)
         outList.append(rightIndex)
@@ -2517,8 +2519,9 @@ def generate_code(tree):
                     print >>fo, "\t\t\tmergeIntoTable("+resultNode+",join" + str(i) + ", &pp);"
                     #print >>fo, "\t\t\tmergeIntoTable("+resultNode+",join" + str(len(joinAttr.dimTables)-1) + ", &pp);"
                     #print >>fo, "\t\t\tmergeIntoTable("+resultNode+",join" + str(i-1) + ", &pp);"
-                elif i > 0:
-                    print >>fo, "\t\t\tmergeIntoTable("+resultNode+",join" + str(i-1) + ", &pp);"
+                elif (i > 0 and len(aggNode) > 0):
+                    #fix here
+                    print >>fo, "\t\t\tmergeIntoTable("+resultNode+",join" + str(len(joinAttr.dimTables)-1) + ", &pp);"
                 else:
                     print >>fo, "\t\t\tmergeIntoTable("+resultNode+",join" + str(i) + ", &pp);"
             else:

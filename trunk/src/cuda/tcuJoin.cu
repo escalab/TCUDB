@@ -79,7 +79,7 @@ __global__ static void count_op(float *red_sum, int length) {
 __global__ static void gb_count(float *red_sum, int length, int *cnt) {
     int i = blockDim.x * blockIdx.x + threadIdx.x;
 
-    if (i > length) return;
+    if (i >= length) return;
     if (red_sum[i] != 0)
         atomicAdd(cnt, 1);
 
@@ -104,6 +104,32 @@ __global__ void pagerank(char *columnIdx, char *columnVal, int matWidth, half *m
             //cuPrintf("mat[%d]\t%.8f\n", i*matWidth + (*id), *val);
         }
     }
+}
+
+/*
+ * mat(A)_ij = a_i.val if a_i.ID = v_j, otherwise 0. 
+ */
+__global__ void static gb_fillA(char *column, int matWidth, half *matA, size_t tupleNum, int attrType) {
+    int i = blockDim.x * blockIdx.x + threadIdx.x;
+
+    if (i >= tupleNum) return;
+
+    int index  = i * attrType;
+    int *value = (int*)&column[index]; // retrieve content's value
+    //matA[i*matWidth + (*value)] = __float2half(1.0f);
+}
+
+/*
+ * mat(B)_ij = 1 if (u_i, v_j) belongs to B, otherwise 0. 
+ */
+__global__ void static gb_fillB(char *column, int matWidth, half *matB, size_t tupleNum, int attrType) {
+    int i = blockDim.x * blockIdx.x + threadIdx.x;
+
+    if (i >= tupleNum) return;
+
+    int index  = i * attrType;
+    int *value = (int*)&column[index]; // retrieve content's value
+    //matB[i*matWidth + (*value)] = __float2half(1.0f);
 }
 
 /* 
@@ -240,25 +266,37 @@ __host__ static void setRed(short *red, int n) {
 }
 
 /*
- * tcuJoinn using NVIDIA's WMMA lib to perform matrix multiplication can aggregation..
+ * tcuJoinn using NVIDIA's cuBLAS lib to perform matrix multiplication and aggregation.
  *
  * Prerequisites:
  *  1. the data to be joined can be fit into GPU device memory.
  *  2. dimension table is not compressed
+ *  3. user know the matrix dimension (#uniq values)
  *  
  * Input:
  *  jNode: contains information about the two joined tables.
  *  pp: records statistics such as kernel execution time
+ *  matrix_dim: matrix width (number of unique values)
+ *  gb: contains groupby information
  *
  * Output:
  *  A new table node
  */
-struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *matrix_dim, struct groupByNode *gb){
+struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *matrix_dim, struct groupByNode *gb, int *gb_val){
     //printf("COUNT: %d\n", COUNT);//19
     //printf("SUM: %d\n", SUM);//20
     float pageRankAlpha;
     //printf("func: %d\n", gb->gbExp[0].func);//37
     //printf("func: %d\n", gb->gbExp[1].func);//19
+    printf("gb_val: %d\n", *gb_val);
+
+    int gbConstant = 0; // 0: no groupBy keyword, 1: has groupBy keyword
+    if (gb->groupByColNum == 1 && gb->groupByIndex[0] == -1) {
+        gbConstant = 1;
+    } 
+    //printf("gb->groupByIndex[0]: %d\n", gb->groupByIndex[0]);
+    //printf("gb->groupByColNum: %d\n", gb->groupByColNum);
+
 #ifdef PAGERANK
     //printf("func: %d\n", gb->gbExp[0].func);
     //printf("PageRank constant: %.3f\n", ((struct mathExp *)((struct mathExp *) gb->gbExp[0].exp.exp)[0].exp)[0].consValue);
@@ -652,6 +690,7 @@ clock_gettime(CLOCK_REALTIME, &maskRED_start);
 #else
 
     // TODO: move this into RED after decouple
+    printf("Here!\n");
     setVector(h_red, MATRIX_N);
     CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(d_red, h_red, sizeof(float) * MATRIX_N, cudaMemcpyHostToDevice));
 #ifdef RED
@@ -826,7 +865,55 @@ clock_gettime(CLOCK_REALTIME, &maskRED_end);
         cudaErrCheck(cudaMemcpy(c_host_cublas, c_cublas, MATRIX_M * MATRIX_N * sizeof(float), cudaMemcpyDeviceToHost));
         verify_result(c_host_cublas, MATRIX_M, MATRIX_N);
         */  
-    } else {
+    }
+    else if (gbConstant !=1) { // contains groupBy keyword
+
+        float *test_red;
+        int *gbcount;
+        CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void **)&test_red, MATRIX_M * sizeof(float)));
+        CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void **)&gbcount, sizeof(int)));
+        CUDA_SAFE_CALL_NO_SYNC(cudaMemset(gbcount, 0, sizeof(int)));
+
+        printf("Running GemmEX (w/ groupBy...)\n");
+        // call TCU join operator
+        cublasErrCheck(cublasGemmEx(cublasHandle, CUBLAS_OP_N, CUBLAS_OP_N,
+                MATRIX_N, MATRIX_M, MATRIX_K,
+                &alpha,
+                d_fp16_BT, CUDA_R_16F, MATRIX_N,
+                d_fp16_A, CUDA_R_16F, MATRIX_K,
+                &beta,
+                c_cublas, CUDA_R_32F, MATRIX_N,
+                //CUDA_R_32F, CUBLAS_GEMM_DFALT_TENSOR_OP)); // tcu
+                CUBLAS_COMPUTE_32F, CUBLAS_GEMM_DEFAULT_TENSOR_OP)); // CUDA 11
+        cudaErrCheck(cudaFree(d_fp16_A));
+        cudaErrCheck(cudaFree(d_fp16_BT));
+
+        cublasErrCheck(cublasGemmEx(cublasHandle, CUBLAS_OP_N, CUBLAS_OP_N,
+                1, MATRIX_M, MATRIX_N,
+                &alpha,
+                d_red, CUDA_R_32F, 1,
+                c_cublas, CUDA_R_32F, MATRIX_N,
+                &beta,
+                test_red, CUDA_R_32F, 1,
+                //CUDA_R_32F, CUBLAS_GEMM_DFALT_TENSOR_OP)); // tcu
+                CUBLAS_COMPUTE_32F, CUBLAS_GEMM_DEFAULT_TENSOR_OP)); // CUDA 11
+
+        // TODO: need to reduce one time (groupBy) then count 
+//        cublasStatus_t ret;
+//        ret = cublasCreate(&cublasHandle);
+//        float *cb_res = (float*)malloc(sizeof(float));
+//        ret = cublasSasum(cublasHandle, MATRIX_M*MATRIX_N, c_cublas, 1, cb_res);
+//        printf("groupBy count: %.0f\n", *cb_res);
+        // call TCU groupBy operator => return gbCount
+        printf("MATRIX_M: %d\n", MATRIX_M);
+        gb_count<<<(MAX_THREADS+MATRIX_M-1)/MAX_THREADS,MAX_THREADS>>> (test_red, MATRIX_M, gbcount);
+
+        int h_gbCount = 0;
+        cudaErrCheck(cudaMemcpy(&h_gbCount, gbcount, sizeof(int), cudaMemcpyDeviceToHost));
+        printf("groupBy count: %d\n", h_gbCount);
+
+    } 
+    else {
         printf("Running Hgemm...\n");
         // no group by keyword, directly perform cublasHgemm
         cublasErrCheck(cublasHgemm(cublasHandle, CUBLAS_OP_N, CUBLAS_OP_N,

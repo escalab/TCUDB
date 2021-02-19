@@ -860,7 +860,7 @@ def generate_code(tree):
             print >>fo, "extern struct tableNode* orderBy(struct orderByNode *, struct statistic *);"
             print >>fo, "extern char* materializeCol(struct materializeNode * mn, struct statistic *);"
         else: # joinType == 2
-            print >>fo, "extern struct tableNode* tcuJoin(struct joinNode *, struct statistic *, int *, struct groupByNode *);"
+            print >>fo, "extern struct tableNode* tcuJoin(struct joinNode *, struct statistic *, int *, struct groupByNode *, int *);"
             #print >>fo, "extern struct tableNode* groupBy(struct groupByNode *,struct statistic *);"
 
     else:              
@@ -919,12 +919,15 @@ def generate_code(tree):
     if joinType == 2:
         print >>fo, "\tint matrix_dim;"
         print >>fo, "\tint *matrix_dim_ptr = &matrix_dim;"
+        print >>fo, "\tint gb_val;"
+        print >>fo, "\tint *gb_val_ptr = &gb_val;"
     print >>fo, "\tchar path[PATH_MAX];"
     print >>fo, "\tint setPath = 0;"
     print >>fo, "\tstruct option long_options[] = {"
     if joinType == 2:
         print >>fo, "\t\t{\"datadir\",required_argument,0,'0'},"
-        print >>fo, "\t\t{\"matrix_dim\",required_argument,0,'1'}"
+        print >>fo, "\t\t{\"matrix_dim\",required_argument,0,'1'},"
+        print >>fo, "\t\t{\"gb_val\",required_argument,0,'2'}"
     else:
         print >>fo, "\t\t{\"datadir\",required_argument,0,'0'}"
     print >>fo, "\t};\n"
@@ -939,10 +942,13 @@ def generate_code(tree):
         print >>fo, "\t\t\tcase '1':"
         print >>fo, "\t\t\t\t*matrix_dim_ptr = atoi(optarg);"
         print >>fo, "\t\t\t\tbreak;"
+        print >>fo, "\t\t\tcase '2':"
+        print >>fo, "\t\t\t\t*gb_val_ptr = atoi(optarg);"
+        print >>fo, "\t\t\t\tbreak;"
     print >>fo, "\t\t}"
     print >>fo, "\t}\n"
 
-#TODO: may remove the check of matrix_dim because there is a findMatWidth function in tcuJoin.cu
+#TODO: modify logic here, gb_val is not mandatory for all cases
 
     if joinType == 2:
         print >>fo, "\tif(path == NULL || *matrix_dim_ptr == 0){"
@@ -2404,9 +2410,13 @@ def generate_code(tree):
                 if (i == len(joinAttr.dimTables)-1 and len(aggNode) > 0):
                     gb_exp_list = aggNode[0].group_by_clause.groupby_exp_list
                     #print >>fo, "\t\tprintf("+ str(gb_exp_list) +");"
+                    #print >>fo, "\t\tprintf("+ str(len(select_list)) +");" # len=1
+                    #print >>fo, "\t\tprintf("+ str(len(aggNode)) +");" # len=1
                     select_list = aggNode[0].select_list.tmp_exp_list
                     selectLen = len(select_list)
                     gbLen = len(gb_exp_list)
+                    #print >>fo, "\t\tprintf("+ str(len(select_list)) +");"
+                    #print >>fo, "\t\tprintf("+ str(len(gb_exp_list)) +");"
                     print >>fo, "\t\tstruct groupByNode * gbNode = (struct groupByNode *) malloc(sizeof(struct groupByNode));"
                     print >>fo, "\t\tCHECK_POINTER(gbNode);"
                     #print >>fo, "\tgbNode->table = " +resultNode +";"
@@ -2424,7 +2434,7 @@ def generate_code(tree):
                             print >>fo, "\t\tgbNode->groupByIndex[" + str(i) + "] = " + str(exp.column_name) + ";"
                             #print >>fo, "\tgbNode->groupByType[" + str(i) + "] = gbNode->table->attrType[" + str(exp.column_name) + "];" 
                             #print >>fo, "\tgbNode->groupBySize[" + str(i) + "] = gbNode->table->attrSize[" + str(exp.column_name) + "];" 
-                        elif isinstance(exp, ystree.YConsExp):
+                        elif isinstance(exp, ystree.YConsExp): # no group by keyword
                             print >>fo, "\t\tgbNode->groupByIndex[" + str(i) + "] = -1;" 
                             #print >>fo, "\t\tgbNode->groupByType[" + str(i) + "] = INT;" 
                             #print >>fo, "\t\tgbNode->groupBySize[" + str(i) + "] = sizeof(int);" 
@@ -2452,7 +2462,7 @@ def generate_code(tree):
                             mathFunc = mathExp()
                             mathFunc.addOp(para)
                             prefix = "\t\tgbNode->gbExp[" + str(i) + "].exp"
-                            printMathFunc(fo,prefix, mathFunc)
+                            printMathFunc(fo,prefix, mathFunc) # don't know how to interpret
             
                         elif isinstance(exp, ystree.YRawColExp):
                             colIndex = exp.column_name
@@ -2492,10 +2502,12 @@ def generate_code(tree):
     
 
             # for i in range(0, gbLen or selectLen)
+            # the following logic determine what operators and parameters to call
 
             if CODETYPE == 0: # CUDA
                 if (i > 0 and len(aggNode) > 0):
-                    print >>fo, "\t\tstruct tableNode *join" + str(len(joinAttr.dimTables)-1) + " = tcuJoin(&" + jName + ",&pp, matrix_dim_ptr, gbNode);\n"
+                    print >>fo, "\t\tstruct tableNode *join" + str(len(joinAttr.dimTables)-1) + " = tcuJoin(&" + jName + ",&pp, matrix_dim_ptr, gbNode, gb_val_ptr);\n"
+                    #print >>fo, "\t\ttest otto"
                     #print >>fo, "\t\tstruct tableNode *join" + str(i-1) + " = tcuJoin(&" + jName + ",&pp, matrix_dim_ptr, gbNode);\n"
                 elif i > 0:
                     print >>fo, "\t\tstruct tableNode *join" + str(i-1) + " = tcuJoin(&" + jName + ",&pp, matrix_dim_ptr, gbNode);\n"

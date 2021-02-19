@@ -39,12 +39,11 @@ gpu: tableScan.cu hashJoin.cu cuckoo.cu inviJoin.cu materialize.cu groupby.cu or
 	$(NVCC) -c -g $(GENCODE_FLAGS) tableScan.cu hashJoin.cu cuckoo.cu inviJoin.cu materialize.cu groupby.cu orderBy.cu 
 
 tcu: tableScan.cu tcuJoin.cu cuckoo.cu
-#	$(NVCC) -c -g $(GENCODE_FLAGS) -DWMMA_HALF tableScan.cu hashJoin.cu tcuJoin.cu cuckoo.cu inviJoin.cu materialize.cu groupby.cu orderBy.cu 
-	$(NVCC) -c -g $(GENCODE_FLAGS) -DCUBLAS_HALF -DMICRO tableScan.cu tcuJoin.cu
+#	$(NVCC) -c -g $(GENCODE_FLAGS) -DCUBLAS_HALF -DMICRO tableScan.cu tcuJoin.cu
 #	$(NVCC) -c -g $(GENCODE_FLAGS) -DCUBLAS_HALF -DITUNES -DRED tableScan.cu hashJoin.cu tcuJoin.cu cuckoo.cu inviJoin.cu materialize.cu groupby.cu orderBy.cu 
 #	$(NVCC) -c -g $(GENCODE_FLAGS) -DCUBLAS_HALF -DPAGERANK -DTHREAD tableScan.cu hashJoin.cu tcuJoin.cu cuckoo.cu inviJoin.cu materialize.cu groupby.cu orderBy.cu 
 #	$(NVCC) -c -g $(GENCODE_FLAGS) -DCUBLAS_HALF -DRED tableScan.cu tcuJoin.cu 
-#	$(NVCC) -c -g $(GENCODE_FLAGS) -DCUBLAS_HALF tableScan.cu tcuJoin.cu 
+	$(NVCC) -c -g $(GENCODE_FLAGS) -DCUBLAS_HALF tableScan.cu tcuJoin.cu 
 #	$(NVCC) -c -g $(GENCODE_FLAGS) -DCUBLAS_HALF -DOUTDEGREE tableScan.cu hashJoin.cu tcuJoin.cu cuckoo.cu inviJoin.cu materialize.cu groupby.cu orderBy.cu 
 #	$(NVCC) -c -g $(GENCODE_FLAGS) -DCUBLAS -DMICRO tableScan.cu hashJoin.cu tcuJoin.cu cuckoo.cu inviJoin.cu materialize.cu groupby.cu orderBy.cu 
 

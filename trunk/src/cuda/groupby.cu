@@ -62,14 +62,14 @@ __global__ static void build_groupby_key(char ** content, int gbColNum, int * gb
 
             }else if (gbType[j] == INT){
                 int key = ((int *)(content[index]))[i];
-                gpuItoa(key,tbuf,10);
-                gpuStrcat(buf,tbuf);
+                gpuItoa(key,tbuf,10); // convert int to string and store into tbuf
+                gpuStrcat(buf,tbuf);  // concat tbuf into buf
             }
         }
-        int hkey = StringHash(buf) % HSIZE;
-        key[i]= hkey;
-        num[hkey] = 1; // gb count +1
-        atomicAdd(&(groupNum[hkey]), 1);
+        int hkey = StringHash(buf) % HSIZE; // HSIZE is defined in common.h, 128kb
+        key[i]= hkey;  // key is an array with sizeof(type) * tupleNum
+        num[hkey] = 1; // num is an array with size HSIZE, for count_group_num to return gbCount
+        atomicAdd(&(groupNum[hkey]), 1); // for agg_cal, func=AVG for each group
     }
 }
 

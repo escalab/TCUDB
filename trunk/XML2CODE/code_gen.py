@@ -2474,7 +2474,7 @@ def generate_code(tree):
                             #print >>fo, "\tgbNode->groupBySize[" + str(i) + "] = gbNode->table->attrSize[" + str(exp.column_name) + "];" 
                         elif isinstance(exp, ystree.YConsExp): # no group by keyword
                             hasGroupBy = False
-                          #  print >>fo, "\t\tgbNode->groupByIndex[" + str(i) + "] = -1;" 
+                            print >>fo, "\t\tgbNode->groupByIndex[" + str(i) + "] = -1;" 
                           #  print >>fo, "\t\tprintf("+"gb YConsExp"+");"
                             #print >>fo, "\t\tgbNode->groupByType[" + str(i) + "] = INT;" 
                             #print >>fo, "\t\tgbNode->groupBySize[" + str(i) + "] = sizeof(int);" 

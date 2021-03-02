@@ -694,7 +694,7 @@ def printMathFunc(fo,prefix, mathFunc):
         print >>fo, prefix + ".exp = 0;"
         print >>fo, prefix + ".opType = COLUMN;"
         print >>fo, prefix + ".opValue = " + str(mathFunc.value) + ";"
-    elif mathFunc.opName == "CONS":
+    elif mathFunc.opName == "CONS": # mathExp is a constant instead of variable
         print >>fo, prefix + ".op = NOOP;" 
         print >>fo, prefix + ".opNum = 1;"
         print >>fo, prefix + ".exp = 0;"
@@ -735,6 +735,33 @@ def printMathFunc2(fo,prefix, mathFunc,attrList):
         prefix2 = "((struct mathExp *)"+ prefix + ".exp)[1]"
         printMathFunc2(fo,prefix1,mathFunc.leftOp,attrList[0])
         printMathFunc2(fo,prefix2,mathFunc.rightOp,attrList[1])
+
+
+def printMathFunc3(fo,prefix, mathFunc, selectIndex, operator):
+
+    if mathFunc.opName == "COLUMN":
+        print >>fo, prefix + ".op = NOOP;" 
+        print >>fo, prefix + ".opNum = 1;"
+        print >>fo, prefix + ".exp = 0;"
+        print >>fo, prefix + ".opType = COLUMN;"
+        print >>fo, prefix + ".opValue = " + str(mathFunc.value) + ";"
+        selectIndex.append(mathFunc.value)
+    elif mathFunc.opName == "CONS": # mathExp is a constant instead of variable
+        print >>fo, prefix + ".op = NOOP;" 
+        print >>fo, prefix + ".opNum = 1;"
+        print >>fo, prefix + ".exp = 0;"
+        print >>fo, prefix + ".opType = CONS;"
+        print >>fo, prefix + ".opValue = " + str(mathFunc.value) + ";"
+        print >>fo, prefix + ".consValue = " + str(mathFunc.value) + ";"
+    else:
+        print >>fo, prefix + ".op = " + mathFunc.opName + ";"
+        operator.append(mathFunc.opName)
+        print >>fo, prefix + ".opNum = 2;"
+        print >>fo, prefix + ".exp = (long) malloc(sizeof(struct mathExp) * 2);"
+        prefix1 = "((struct mathExp *)" + prefix + ".exp)[0]"
+        prefix2 = "((struct mathExp *)"+ prefix + ".exp)[1]"
+        printMathFunc3(fo,prefix1,mathFunc.leftOp,  selectIndex, operator)
+        printMathFunc3(fo,prefix2,mathFunc.rightOp, selectIndex, operator)
 """
 generate_col_list gets all the columns that will be scannned for a given table node.
 @indexList stores the index of each column.
@@ -2405,7 +2432,12 @@ def generate_code(tree):
             print >>fo, "\t\t" + jName + ".rightKeyIndex = " + str(joinAttr.dimIndex[i]) + ";"
             print >>fo, "\t\t" + jName + ".leftKeyIndex = " + str(joinAttr.factIndex[i]) + ";"
 
-            # try to pass gbNode info to tcuJoin
+            #TODO: extract outputIndex and Pos
+            lOutLen = len(lOutList)
+            rOutLen = len(rOutList)
+          #  print >>fo, "\t\t" + "printf(lOut:" + str(lOutLen)+ " rOut:" + str(rOutLen) + ");"
+
+            # construct gbNode info (allows tcuJoin to call corresponding filling methods)
             if joinType == 2:
                 if (i == len(joinAttr.dimTables)-1 and len(aggNode) > 0):
                     gb_exp_list = aggNode[0].group_by_clause.groupby_exp_list
@@ -2416,7 +2448,8 @@ def generate_code(tree):
                     selectLen = len(select_list)
                     gbLen = len(gb_exp_list)
                     #print >>fo, "\t\tprintf("+ str(len(select_list)) +");"
-                    #print >>fo, "\t\tprintf("+ str(len(gb_exp_list)) +");"
+                    # whether has groupBy keyword, if there is aggFunc, gbLen=1
+                    #print >>fo, "\t\tprintf("+ str(gbLen) +");"
                     print >>fo, "\t\tstruct groupByNode * gbNode = (struct groupByNode *) malloc(sizeof(struct groupByNode));"
                     print >>fo, "\t\tCHECK_POINTER(gbNode);"
                     #print >>fo, "\tgbNode->table = " +resultNode +";"
@@ -2428,14 +2461,21 @@ def generate_code(tree):
                     #print >>fo, "\tgbNode->groupBySize = (int *)malloc(sizeof(int) * " + str(gbLen) + ");"
                     #print >>fo, "\tCHECK_POINTER(gbNode->groupBySize);"
             
+                    # bool to judge which index for gbExp[i] to parse
+                    hasGroupBy = False
+                    # first determine whether there is group-by keyword
                     for i in range(0,gbLen):
                         exp = gb_exp_list[i]
                         if isinstance(exp, ystree.YRawColExp):
+                            hasGroupBy = True
                             print >>fo, "\t\tgbNode->groupByIndex[" + str(i) + "] = " + str(exp.column_name) + ";"
+                          #  print >>fo, "\t\tprintf("+"gb YRawColExp"+");"
                             #print >>fo, "\tgbNode->groupByType[" + str(i) + "] = gbNode->table->attrType[" + str(exp.column_name) + "];" 
                             #print >>fo, "\tgbNode->groupBySize[" + str(i) + "] = gbNode->table->attrSize[" + str(exp.column_name) + "];" 
                         elif isinstance(exp, ystree.YConsExp): # no group by keyword
-                            print >>fo, "\t\tgbNode->groupByIndex[" + str(i) + "] = -1;" 
+                            hasGroupBy = False
+                          #  print >>fo, "\t\tgbNode->groupByIndex[" + str(i) + "] = -1;" 
+                          #  print >>fo, "\t\tprintf("+"gb YConsExp"+");"
                             #print >>fo, "\t\tgbNode->groupByType[" + str(i) + "] = INT;" 
                             #print >>fo, "\t\tgbNode->groupBySize[" + str(i) + "] = sizeof(int);" 
                         else:
@@ -2450,6 +2490,7 @@ def generate_code(tree):
                     print >>fo, "\t\tgbNode->gbExp = (struct groupByExp *) malloc(sizeof(struct groupByExp) * " + str(selectLen) + ");"
                     print >>fo, "\t\tCHECK_POINTER(gbNode->gbExp);"
             
+                    # second, parse select clause including mathFunc
                     for i in range(0,selectLen):
                         exp = select_list[i]
                         if isinstance(exp, ystree.YFuncExp):
@@ -2458,11 +2499,51 @@ def generate_code(tree):
                             print >>fo, "\t\tgbNode->attrType[" + str(i) + "] = FLOAT;"
                             print >>fo, "\t\tgbNode->attrSize[" + str(i) + "] = sizeof(float);"
                             print >>fo, "\t\tgbNode->gbExp["+str(i)+"].func = " + exp.func_name + ";"
+                            # memorize the index of SUM func
+                            if (exp.func_name == "SUM"):
+                                print >>fo, "\t\tgbNode->aggFuncIndex = "+str(i)+";"
+                            else:
+                                print >>fo, "\t\tgbNode->aggFuncIndex = "+"-1;"
+
                             para = exp.parameter_list[0]
                             mathFunc = mathExp()
                             mathFunc.addOp(para)
                             prefix = "\t\tgbNode->gbExp[" + str(i) + "].exp"
-                            printMathFunc(fo,prefix, mathFunc) # don't know how to interpret
+                            opValueList = []
+                            operator = []
+                            printMathFunc3(fo,prefix, mathFunc, opValueList, operator)
+                          #  print >>fo, "\t\tprintf("+"YFuncExp selectLen "+str(len(opValueList))+");"
+                          #  print >>fo, "\t\tprintf("+"YFuncExp ColIdx "+str(opValueList[0])+");"
+                          #  print >>fo, "\t\tprintf("+"YFuncExp ColIdx "+str(opValueList[1])+");"
+                          #  print >>fo, "\t\tprintf("+"YFuncExp operatorLen "+str(len(operator))+");"
+                          #  print >>fo, "\t\tprintf("+str(operator[-1])+");"
+
+                            print >>fo, "\t\tgbNode->funcExpColIndex = (int *) malloc(sizeof(int) * " + str(len(opValueList)) + ");"
+                            print >>fo, "\t\tCHECK_POINTER(gbNode->funcExpColIndex);"
+
+                            # store the required info to gbNode
+                            # if SQL matches the pattern, call corresponding fill matrix
+                            if (hasGroupBy): #access gbIdx => gbNode->groupByIndex
+
+                                # assign operator, MULTIPLY or PLUS
+                                if (len(operator) > 0):
+                                    print >>fo, "\t\tgbNode->math_op = "+str(operator[-1])+";"
+
+                                # judge whether to copy from left/right table 
+                                # should be checked in tcuJoin function
+                                for i in range(0, len(opValueList)):
+                                    print >>fo, "\t\tgbNode->funcExpColIndex["+str(i)+"] = "+str(opValueList[i])+";"
+                            else:
+                                # assign operator and store into groupByNode
+                                if (len(operator) > 0):
+                                    print >>fo, "\t\tgbNode->math_op = "+str(operator[-1])+";"
+                                    
+                                # assign selectColIdx
+                                # store into groupByNode
+                                for i in range(0, len(opValueList)):
+                                    print >>fo, "\t\tgbNode->funcExpColIndex["+str(i)+"] = "+str(opValueList[i])+";"
+
+                            
             
                         elif isinstance(exp, ystree.YRawColExp):
                             colIndex = exp.column_name
@@ -2475,6 +2556,9 @@ def generate_code(tree):
                             print >>fo, "\t\tgbNode->gbExp[" + str(i) + "].exp.opNum = 1;"
                             print >>fo, "\t\tgbNode->gbExp[" + str(i) + "].exp.opType = COLUMN;"
                             print >>fo, "\t\tgbNode->gbExp[" + str(i) + "].exp.opValue = " + str(exp.column_name) + ";"
+                            # e.g. Q3, B.Val
+                           # print >>fo, "\t\tprintf(" + "YRawColExp " + str(colIndex) + ");"
+
                             #print >>fo, "\t\tgbNode->gbExp[" + str(i) + "].exp.consValue = " + str(exp.column_name) + ";"
             
                         else:
@@ -2497,6 +2581,7 @@ def generate_code(tree):
                             print >>fo, "\t\tgbNode->gbExp[" + str(i) + "].exp.opNum = 1;"
                             print >>fo, "\t\tgbNode->gbExp[" + str(i) + "].exp.opType = CONS;"
                             print >>fo, "\t\tgbNode->gbExp[" + str(i) + "].exp.opValue = " + str(exp.cons_value) + ";"
+                            print >>fo, "\t\t" + str(000000000) + ";"
                             #print >>fo, "\t\tgbNode->gbExp[" + str(i) + "].exp.consValue = " + str(exp.cons_value) + ";"
                             # until this point
     

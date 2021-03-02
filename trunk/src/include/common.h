@@ -64,14 +64,14 @@ enum {
     EXP,
     EXPSUB,                 /* the where exp is a math exp, and the column is correlated */
 
-/* supported groupby function */
+/* supported groupby function,17-21 */
     MIN,
     MAX,
     COUNT,
     SUM,
     AVG,
 
-/* supported math operation */
+/* supported math operation,22-25 */
     PLUS,
     MINUS,
     MULTIPLY,
@@ -219,7 +219,12 @@ struct groupByNode{
     int tupleSize;              /* the size of the tuple in the join result */
 
     int * keepInGpu;            /* whether the results should be kept in gpu */
-
+    /* additional var to store selectColIdx for Q3, Q4 */
+    int * funcExpColIndex;       /* column index in FuncExp */
+    //int * lColIndex;            /* left  column index in FuncExp */
+    //int * rColIndex;            /* right column index in FuncExp */
+    int math_op;                /* check MULTIPLY or PLUS, may need to extend to list */
+    int aggFuncIndex;           /* the index of SUM function expression */
 };
 
 struct sortRecord{

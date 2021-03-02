@@ -2517,7 +2517,7 @@ def generate_code(tree):
                           #  print >>fo, "\t\tprintf("+"YFuncExp ColIdx "+str(opValueList[1])+");"
                           #  print >>fo, "\t\tprintf("+"YFuncExp operatorLen "+str(len(operator))+");"
                           #  print >>fo, "\t\tprintf("+str(operator[-1])+");"
-
+                            print >>fo, "\t\tgbNode->numFuncExpCol = " + str(len(opValueList)) + ";"
                             print >>fo, "\t\tgbNode->funcExpColIndex = (int *) malloc(sizeof(int) * " + str(len(opValueList)) + ");"
                             print >>fo, "\t\tCHECK_POINTER(gbNode->funcExpColIndex);"
 

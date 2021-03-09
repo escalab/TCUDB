@@ -887,7 +887,7 @@ def generate_code(tree):
             print >>fo, "extern struct tableNode* orderBy(struct orderByNode *, struct statistic *);"
             print >>fo, "extern char* materializeCol(struct materializeNode * mn, struct statistic *);"
         else: # joinType == 2
-            print >>fo, "extern struct tableNode* tcuJoin(struct joinNode *, struct statistic *, int *, struct groupByNode *, int *);"
+            print >>fo, "extern struct tableNode* tcuJoin(struct joinNode *, struct statistic *, int *, struct groupByNode *);"
             #print >>fo, "extern struct tableNode* groupBy(struct groupByNode *,struct statistic *);"
 
     else:              
@@ -946,15 +946,15 @@ def generate_code(tree):
     if joinType == 2:
         print >>fo, "\tint matrix_dim;"
         print >>fo, "\tint *matrix_dim_ptr = &matrix_dim;"
-        print >>fo, "\tint gb_val;"
-        print >>fo, "\tint *gb_val_ptr = &gb_val;"
+        #print >>fo, "\tint gb_val;"
+        #print >>fo, "\tint *gb_val_ptr = &gb_val;"
     print >>fo, "\tchar path[PATH_MAX];"
     print >>fo, "\tint setPath = 0;"
     print >>fo, "\tstruct option long_options[] = {"
     if joinType == 2:
         print >>fo, "\t\t{\"datadir\",required_argument,0,'0'},"
-        print >>fo, "\t\t{\"matrix_dim\",required_argument,0,'1'},"
-        print >>fo, "\t\t{\"gb_val\",required_argument,0,'2'}"
+        print >>fo, "\t\t{\"matrix_dim\",required_argument,0,'1'}"
+        #print >>fo, "\t\t{\"gb_val\",required_argument,0,'2'}"
     else:
         print >>fo, "\t\t{\"datadir\",required_argument,0,'0'}"
     print >>fo, "\t};\n"
@@ -969,9 +969,9 @@ def generate_code(tree):
         print >>fo, "\t\t\tcase '1':"
         print >>fo, "\t\t\t\t*matrix_dim_ptr = atoi(optarg);"
         print >>fo, "\t\t\t\tbreak;"
-        print >>fo, "\t\t\tcase '2':"
-        print >>fo, "\t\t\t\t*gb_val_ptr = atoi(optarg);"
-        print >>fo, "\t\t\t\tbreak;"
+        #print >>fo, "\t\t\tcase '2':"
+        #print >>fo, "\t\t\t\t*gb_val_ptr = atoi(optarg);"
+        #print >>fo, "\t\t\t\tbreak;"
     print >>fo, "\t\t}"
     print >>fo, "\t}\n"
 
@@ -2591,7 +2591,7 @@ def generate_code(tree):
 
             if CODETYPE == 0: # CUDA
                 if (i > 0 and len(aggNode) > 0):
-                    print >>fo, "\t\tstruct tableNode *join" + str(len(joinAttr.dimTables)-1) + " = tcuJoin(&" + jName + ",&pp, matrix_dim_ptr, gbNode, gb_val_ptr);\n"
+                    print >>fo, "\t\tstruct tableNode *join" + str(len(joinAttr.dimTables)-1) + " = tcuJoin(&" + jName + ",&pp, matrix_dim_ptr, gbNode);\n"
                     #print >>fo, "\t\ttest otto"
                     #print >>fo, "\t\tstruct tableNode *join" + str(i-1) + " = tcuJoin(&" + jName + ",&pp, matrix_dim_ptr, gbNode);\n"
                 elif i > 0:

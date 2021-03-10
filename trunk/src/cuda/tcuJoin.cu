@@ -106,60 +106,53 @@ __global__ void pagerank(char *columnIdx, char *columnVal, int matWidth, half *m
     }
 }
 
-/*
- * mat(A)_ij = a_i.val if a_i.ID = v_j, otherwise 0. 
- */
-__global__ void static gb_fillA(char *column, int matWidth, half *matA, size_t tupleNum, int attrType) {
-    int i = blockDim.x * blockIdx.x + threadIdx.x;
-
-    if (i >= tupleNum) return;
-
-    int index  = i * attrType;
-    int *value = (int*)&column[index]; // retrieve content's value
-    //matA[i*matWidth + (*value)] = __float2half(1.0f);
-}
-
-/*
- * mat(B)_ij = 1 if (u_i, v_j) belongs to B, otherwise 0. 
- */
-__global__ void static gb_fillB(char *column, int matWidth, half *matB, size_t tupleNum, int attrType) {
-    int i = blockDim.x * blockIdx.x + threadIdx.x;
-
-    if (i >= tupleNum) return;
-
-    int index  = i * attrType;
-    int *value = (int*)&column[index]; // retrieve content's value
-    //matB[i*matWidth + (*value)] = __float2half(1.0f);
-}
-
 /* 
  *  Fill 1.0 on the index of unique value in the matrix;
  *  fill 0.0, otherwise. 
  */
-__global__ void static gpu_fill(char *column, int matWidth, half *mat, size_t tupleNum, int attrType) {
+__global__ void static gpu_fill(char *column, int matWidth, half *matA, size_t tupleNum, int attrType) {
     int i = blockDim.x * blockIdx.x + threadIdx.x;
-
     if (i >= tupleNum) return;
 
     int index = i * attrType;
     //int value = (int)column[index]; // char -> int will lose 3 bytes
     int *value   = (int*)&column[index];
-    //mat[i*matWidth + (*value)] = __int2half_rd(1);
-    mat[i*matWidth + (*value)] = __float2half(1.0f);
+    matA[i*matWidth + (*value)] = __float2half(1.0f);
+}
+
+/* Fill matrix with data value. */
+__global__ void static gpu_fill_data(char *join_column, char *data_column, int matWidth_k, half *matA, size_t tupleNum, int attrType) {
+    int i = blockDim.x * blockIdx.x + threadIdx.x;
+    if (i >= tupleNum) return;
+
+    int index = i * attrType;
+    int *join_value = (int*)&join_column[index];
+    int *data_value = (int*)&data_column[index];
+    matA[i * matWidth_k + (*join_value)] = __float2half((float)(*data_value));
+}
+
+/* Fill matrix with ones according to groupBy column in transpose format. */
+__global__ void static gpu_fill_gb_transpose(char *join_column, char *data_column, int matWidth_n, half *matB, size_t tupleNum, int attrType) {
+    int i = blockDim.x * blockIdx.x + threadIdx.x;
+    if (i >= tupleNum) return;
+
+    int index = i * attrType;
+    int *join_value = (int*)&join_column[index];
+    int *data_value = (int*)&data_column[index];
+    matB[(*join_value) * matWidth_n + (*data_value)] = __float2half(1.0f);
 }
 
 /*
- * Fill matrix in transpose matrix format.
+ * Fill ones matrix in transpose matrix format.
  */
-__global__ void static gpu_fill_transpose(char *column, int matWidth, half *mat, size_t tupleNum, int attrType) {
+__global__ void static gpu_fill_transpose(char *column, int matWidth, half *matB, size_t tupleNum, int attrType) {
     int i = blockDim.x * blockIdx.x + threadIdx.x;
-
     if (i >= tupleNum) return;
 
     int index = i * attrType;
     int *value   = (int*)&column[index];
     int pos = (*value)*tupleNum+i;
-    mat[pos] = __float2half(1.0f);
+    matB[pos] = __float2half(1.0f);
 }
 
 /* Fill matrix in dense format for matrix multiplication */
@@ -239,6 +232,14 @@ __global__ void static convertFp16ToFp32(float *out, half *in, int n) {
     }
 }
 
+/* Convert input data from char to half type */
+__global__ void static convertCharToFp16(half *out, char *in, int n) {
+    int idx = blockDim.x * blockIdx.x + threadIdx.x;
+    if (idx < n) {
+        out[idx] = __int2half_rn((int)in[idx]);
+    }
+}
+
 /* set the first column of the matrix to be 1.0 */
 __host__ static void set_mask(float *mask, int height, int width) {
     for (int i = 0; i < height*width; i+=width) {
@@ -265,6 +266,86 @@ __host__ static void setRed(short *red, int n) {
         red[i] = (short)1;
 }
 
+/* Get column index from aggregate function for later data copy. */
+__host__ static void getValIndex(struct joinNode *jNode, struct groupByNode *gb, int *lValIndex, int *rValIndex) {
+
+    for (int i = 0; i < jNode->leftOutputAttrNum; i++) {
+        for (int j = 0; j < gb->numFuncExpCol; j++) {
+            if ((jNode->leftPos[i] == gb->funcExpColIndex[j]) || jNode->leftPos[i] == gb->groupByIndex[0]) {
+                lValIndex[i] = jNode->leftOutputIndex[i];
+            }
+            
+        }
+    } 
+    
+    for (int i = 0; i < jNode->rightOutputAttrNum; i++) {
+        for (int j = 0; j < gb->numFuncExpCol; j++) {
+            if ((jNode->rightPos[i] == gb->funcExpColIndex[j]) || (jNode->rightPos[i] == gb->groupByIndex[0])) {
+                rValIndex[i] = jNode->rightOutputIndex[i];
+            }
+            
+        }
+    } 
+}
+
+/* Match the first groupBy attribute, return 0 (left), 1 (right)*/
+__host__ static int getGbLeftRight(struct joinNode *jNode, struct groupByNode *gb, int &gbConstant, int &gbLeftRight) {
+    if (gbConstant == 1) return -1;
+    
+    for (int i = 0; i < jNode->leftOutputAttrNum; i++) {
+        if (jNode->leftPos[i] == gb->groupByIndex[0]) {
+            return 0;
+        }
+    } 
+    
+    for (int i = 0; i < jNode->rightOutputAttrNum; i++) {
+        if (jNode->rightPos[i] == gb->groupByIndex[0]) {
+            return 1;
+        }
+    } 
+    return -1;
+}
+
+/* Mimic the max() in relational database. */
+__host__ int getMaxVal(char *column, size_t tupleNum, int attrType) {
+    int localMax = 0;
+
+    for (int i = 0; i < tupleNum; i++) {
+        int *val = (int*)&column[i*attrType];
+        if (localMax < *val) {
+            localMax = *val;
+        }
+    }
+    return localMax;
+}
+
+/* Need to copy values to device */
+__global__ void getMaxValGPU(char *column, size_t tupleNum, int attrType, int *maxVal) {
+    __shared__ int sharedMax;
+
+    if (threadIdx.x == 0) {
+        sharedMax = 0;
+    }
+    __syncthreads();
+
+    int localMax = 0;
+    for (int i = threadIdx.x; i < tupleNum; i += blockDim.x) {
+        int index = i * attrType;
+        int *value   = (int*)&column[index];
+
+        if (localMax < abs(*value)) {
+            localMax = abs(*value);
+        }
+    }
+
+    atomicMax(&sharedMax, localMax);
+    __syncthreads();
+    
+    if (threadIdx.x == 0) {
+        *maxVal = sharedMax;
+    }
+}
+
 /*
  * tcuJoinn using NVIDIA's cuBLAS lib to perform matrix multiplication and aggregation.
  *
@@ -280,22 +361,76 @@ __host__ static void setRed(short *red, int n) {
  *  gb: contains groupby information
  *
  * Output:
- *  A new table node
+ *  Number of join counts and groupBy count if query contains groupBy keyword.
+ *
+ * Assumptions:
+ *
+ * 1. Two joined table schemas are the same for the simplicity of query parser.
+ * 2. For all demo cases, all column types are INT, only PageRank queries 
+ *    contain constant variable such as alpha and number of nodes.
+ * 3. To support complex customized queries, code_gen.py modification is required.
  */
-struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *matrix_dim, struct groupByNode *gb, int *gb_val){
-    //printf("COUNT: %d\n", COUNT);//19
-    //printf("SUM: %d\n", SUM);//20
-    float pageRankAlpha;
-    //printf("func: %d\n", gb->gbExp[0].func);//37
-    //printf("func: %d\n", gb->gbExp[1].func);//19
-    printf("gb_val: %d\n", *gb_val);
+struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *matrix_dim, struct groupByNode *gb){
 
-    int gbConstant = 0; // 0: no groupBy keyword, 1: has groupBy keyword
+    float pageRankAlpha;
+
+    int gbConstant = 0;   // 0: has groupBy, 1: no groupBy keyword
+    int gbLeftRight = -1; // 0: gb by left, 1: gb by right
+    int matWidth_n = 0;   // size of dom(gb_column.val)
+
     if (gb->groupByColNum == 1 && gb->groupByIndex[0] == -1) {
         gbConstant = 1;
-    } 
-    //printf("gb->groupByIndex[0]: %d\n", gb->groupByIndex[0]);
-    //printf("gb->groupByColNum: %d\n", gb->groupByColNum);
+    }
+    
+    if (gbConstant != 1) { // contains groupBy keyword
+        char *gb_column;
+        // linear scan to find the max value of groupBy column 
+        gbLeftRight = getGbLeftRight(jNode, gb, gbConstant, gbLeftRight);
+        if (gbLeftRight == 0) {
+            gb_column = jNode->leftTable->content[gb->groupByIndex[0]];
+
+            matWidth_n = getMaxVal(gb_column, jNode->leftTable->tupleNum, jNode->leftOutputAttrType[0]) + 1;
+            printf("matA matWidth_n: %d\n", matWidth_n);
+        } else if (gbLeftRight == 1) {
+            gb_column = jNode->rightTable->content[gb->groupByIndex[0]];
+            matWidth_n = getMaxVal(gb_column, jNode->rightTable->tupleNum, jNode->rightOutputAttrType[0]) + 1;
+            printf("matB matWidth_n: %d\n", matWidth_n);
+        } else {
+            printf("No matched column found.\n");
+        }
+    }
+
+    // TODO: determine which table to copy value column (left/right or both)
+    // SUM(...) and Group By ... are needed to be copied!
+    // column index are leftOutputIndex[0] or rightOutputIndex[0]
+    printf("numFuncExpCol: %d\n", gb->numFuncExpCol); // determine number of data column to be copied
+    //printf("funcExpColIndex: %d\n", gb->funcExpColIndex[0]);
+    int *lValIndex, *rValIndex;
+    lValIndex = (int *)malloc(sizeof(int) * jNode->leftOutputAttrNum);
+    rValIndex = (int *)malloc(sizeof(int) * jNode->rightOutputAttrNum);
+    memset(lValIndex, -1, sizeof(int) * jNode->leftOutputAttrNum);
+    memset(rValIndex, -1, sizeof(int) * jNode->rightOutputAttrNum);
+
+    // get data value index from gbNode
+    getValIndex(jNode, gb, lValIndex, rValIndex);
+    //printf("lValIndex[0]: %d\n", lValIndex[0]); // data copy from lValIndex
+    //printf("rValIndex[0]: %d\n", rValIndex[0]);
+
+    /*
+    char **gpu_ldata, **gpu_rdata; // #columns of left/right tables
+    CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&gpu_ldata,foreignKeySize));
+    gpu_ldata = (char **)malloc(jNode->leftOutputAttrNum * sizeof(char *));
+    gpu_rdata = (char **)malloc(jNode->rightOutputAttrNum * sizeof(char *));
+
+    for(i = 0; i < jNode->leftOutputAttrNum; i++) {
+        CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&gpu_ldata[i],foreignKeySize));
+    }
+
+    for(i = 0; i < jNode->rightOutputAttrNum; i++) {
+        CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&gpu_rdata[i],primaryKeySize));
+    }
+    */
+
 
 #ifdef PAGERANK
     //printf("func: %d\n", gb->gbExp[0].func);
@@ -323,9 +458,9 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
 
     // parse user input dimension from command line
     //int MATRIX_M, MATRIX_N, MATRIX_K;
-    uint64_t MATRIX_M, MATRIX_N, MATRIX_K; // use uint64_t to avoid overflow
+    uint64_t MATRIX_M, MATRIX_N, MATRIX_K; // avoid overflow
     
-    MATRIX_K = *matrix_dim; // user input, matrix width
+    MATRIX_K = *matrix_dim; // user input, matrix width(#unique values)
 #ifdef MICRO
     // Note: in our test cases, we use square matrix dense table (M=N=K)
     MATRIX_M = MATRIX_K;
@@ -334,6 +469,8 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
     MATRIX_M = (uint64_t)leftTupleNum;
     MATRIX_N = (uint64_t)rightTupleNum;
 #endif // end of MICRO
+    long foreignKeySize = jNode->leftTable->attrTotalSize[jNode->leftKeyIndex];
+    long primaryKeySize = jNode->rightTable->attrTotalSize[jNode->rightKeyIndex];
 /*
     printf("Left Tuple #: %d\n", leftTupleNum);
     printf("Right Tuple #: %d\n", rightTupleNum);
@@ -354,9 +491,12 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
 #endif
 
     // read row data from tbl
-    char *gpu_fact, *gpu_dim;         // index
+    char *gpu_fact, *gpu_dim;         // joined column index
     char *gpu_fact_j, *gpu_dim_j;     // another index for dense table
     char *gpu_fact_val, *gpu_dim_val; // value
+    char *gpu_ldata, *gpu_rdata;      // data columns of left/right tables
+    char *d_redMat;
+    half *d_redMatFp16;
 
     float alpha = 1.0f;
     float beta = 0.0f;
@@ -426,12 +566,22 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
 // allocate device memory for inputs
 #ifdef CUBLAS_HALF
     
-    long foreignKeySize = jNode->leftTable->attrTotalSize[jNode->leftKeyIndex];
-    long primaryKeySize = sizeof(int) * jNode->rightTable->tupleNum;
+//    long foreignKeySize = jNode->leftTable->attrTotalSize[jNode->leftKeyIndex];
+//    long primaryKeySize = jNode->rightTable->attrTotalSize[jNode->rightKeyIndex];
 
     //printf("gpu_fact size: %d\tgpu_dim size: %d\n", foreignKeySize, primaryKeySize);
     CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&gpu_fact,foreignKeySize));
     CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&gpu_dim,primaryKeySize));
+
+    if (lValIndex[0] != -1) {
+        CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&gpu_ldata,foreignKeySize));
+        printf("cudaMalloc left_data column\n");
+    }
+
+    if (rValIndex[0] != -1) {
+        CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&gpu_rdata,primaryKeySize));
+        printf("cudaMalloc right_data column\n");
+    }
 #ifdef MICRO
     CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&gpu_fact_j,foreignKeySize));
     CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&gpu_dim_j,primaryKeySize));
@@ -450,7 +600,6 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
     // B mat filling by counting src node -- B should be MATRIX_N * 1
     c_host_cublas = (float*)calloc(MATRIX_M*MATRIX_M, sizeof(float));
     CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&c_cublas, (uint64_t)MATRIX_M * (uint64_t)MATRIX_M * sizeof(float)));
-    //TODO: not sure if need to transpose B mat
     CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&d_fp16_A, (uint64_t)MATRIX_M * 1 * sizeof(half)));
     CUDA_SAFE_CALL_NO_SYNC(cudaMemset(d_fp16_A, 1, (uint64_t)MATRIX_M * 1 * sizeof(half)));
     // same dimension as A mat
@@ -541,8 +690,6 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
 
     clock_gettime(CLOCK_REALTIME, &fill_end); 
 #elif OUTDEGREE // PageRank Q1
-    //int A_tupleNum = jNode->leftTable->tupleNum;
-    //int B_tupleNum = jNode->rightTable->tupleNum;
 
     clock_gettime(CLOCK_REALTIME, &cuMemcpy_start);
     CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(gpu_fact_val,jNode->leftTable->content[1], foreignKeySize,cudaMemcpyHostToDevice));
@@ -562,17 +709,23 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
 // end of OUTDEGREE to cudaMemcpy and filling matrix
 
 #else //  MM for join count
-    //int A_tupleNum = jNode->leftTable->tupleNum;
-    //int B_tupleNum = jNode->rightTable->tupleNum;
-
-//#ifdef THREAD
-//    pthread_join(thread, NULL);
-//#endif
 
     // cudaMemcpyHostToDevice raw data->char *column
     clock_gettime(CLOCK_REALTIME, &cuMemcpy_start);
     CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(gpu_fact,jNode->leftTable->content[jNode->leftKeyIndex], foreignKeySize,cudaMemcpyHostToDevice));
     CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(gpu_dim,jNode->rightTable->content[jNode->rightKeyIndex], primaryKeySize,cudaMemcpyHostToDevice));
+    if (lValIndex[0] != -1) {
+        CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(gpu_ldata,jNode->leftTable->content[lValIndex[0]], foreignKeySize,cudaMemcpyHostToDevice));
+    }
+    if (rValIndex[0] != -1) {
+        CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(gpu_rdata,jNode->rightTable->content[rValIndex[0]], primaryKeySize,cudaMemcpyHostToDevice));
+    }
+
+    /*for (int i = 0; i < 5; i ++) {
+        int *value   = (int*)&jNode->leftTable->content[0][i*4];
+        printf("%d\n", *value);
+    }*/
+
 
 #ifdef PAGERANK  // pagerank requires additional float value instead of filling 0/1
     int factCol = jNode->leftOutputIndex[jNode->leftOutputAttrNum-1];
@@ -612,6 +765,106 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
         CUDA_SAFE_CALL_NO_SYNC(cudaMemset(c_cublas,0,(uint64_t)MATRIX_M*(uint64_t)MATRIX_N*sizeof(float)));
     }
 #else // query ask for join counts except for OUTDEGREE, MICRO, PAGERANK
+    //TODO: call corresponding filling method (check SQL pattern)
+    if (gb->gbExp[gb->aggFuncIndex].func == SUM) {
+        printf("Query contains SUM\n");
+
+        if (gb->numFuncExpCol == 1) { // Q3
+            // judge whether to pass left or right data column
+            if (rValIndex[0] == -1) // pass left 
+            {
+
+               // getMaxValGPU(char *column, size_t tupleNum, int attrType, int *maxVal);
+                // gpu_fill_data (left), gpu_fill_transpose (right)
+                gpu_fill_data<<<(MAX_THREADS+leftTupleNum-1)/MAX_THREADS,MAX_THREADS>>> (gpu_fact,
+                    gpu_ldata,    
+                    MATRIX_K,
+                    d_fp16_A,
+                    leftTupleNum,
+                    jNode->leftTable->attrType[jNode->leftKeyIndex]);
+
+                cudaErrCheck(cudaFree(gpu_fact));
+                cudaErrCheck(cudaFree(gpu_ldata));
+                // TODO: right fill with ones_gb
+                gpu_fill_gb_transpose<<<(MAX_THREADS+rightTupleNum-1)/MAX_THREADS,MAX_THREADS>>> (
+                        gpu_dim,
+                        gpu_rdata,
+                        matWidth_n,
+                        d_fp16_BT,
+                        rightTupleNum,
+                        jNode->rightTable->attrType[jNode->rightKeyIndex]);
+
+                cudaErrCheck(cudaFree(gpu_dim));
+                cudaErrCheck(cudaFree(gpu_rdata));
+
+                /*
+                gpu_fill_transpose<<<(MAX_THREADS+rightTupleNum-1)/MAX_THREADS,MAX_THREADS>>> (gpu_dim,
+                    MATRIX_K,
+                    d_fp16_BT,
+                    rightTupleNum,
+                    jNode->rightTable->attrType[jNode->rightKeyIndex]);
+
+                cudaErrCheck(cudaFree(gpu_dim));
+                */
+            } 
+            else if (lValIndex[0] == -1)// pass right 
+            {
+                // call gpu_fill (left), gpu_fill_transpose_data (right)
+
+            }
+        }
+        else if (gb->numFuncExpCol == 2) { // Q4, gb->numFuncExpCol == 2
+
+        }
+        
+
+
+    }
+
+    /* If has groupBy, after MM, then compute gbCount */
+/*    if (gbConstant != 1) { // print gbCount
+        CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&d_redMat, 1 * MATRIX_M * sizeof(char)));
+        CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&d_redMatFp16, 1 * MATRIX_M * sizeof(half)));
+        CUDA_SAFE_CALL_NO_SYNC(cudaMemset(d_redMat, 1, MATRIX_M * sizeof(char)));
+        convertCharToFp16 <<< (MATRIX_M + 255) / 256, 256 >>> (d_redMatFp16, 
+                d_redMat, MATRIX_M);
+        
+        // compute groupBy count by performing reduction
+
+    }*/
+
+    /*
+     Q3
+     Need to determine take left/right data column and groupBy which table? => gbLeftRight
+     0: left, 1: right
+     1 -- either lValIndex or rValIndex is -1, one as actual value, the other as 1
+     */
+    /*
+    if (gb->numFuncExpCol == 1) {
+        // judge whether to pass left or right data column
+        if (rValIndex[0] == -1) // pass left 
+        {
+            // gpu_fill_data (left), gpu_fill_transpose (right)
+
+        } 
+        else if (lValIndex[0] == -1)// pass right 
+        {
+            // call gpu_fill (left), gpu_fill_transpose_data (right)
+
+        }
+    }*/
+
+    /*
+     Q4
+     if (gb->math_op == MULTIPLY && (lValIndex[0] != -1 && rValIndex[0] != -1))
+     both lValIndex/rValIndex are not -1, all pass value into func 
+     */
+
+    /*
+     Else case -- leave it with the general matrix multiplication => return join_count
+     */
+
+    /*
     gpu_fill<<<(MAX_THREADS+leftTupleNum-1)/MAX_THREADS,MAX_THREADS>>> (gpu_fact,
             MATRIX_K,
             d_fp16_A,
@@ -624,16 +877,9 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, int *ma
             d_fp16_BT,
             rightTupleNum,
             jNode->rightTable->attrType[jNode->rightKeyIndex]);
-    
-    /*
-    gpu_fill<<<(MAX_THREADS+rightTupleNum-1)/MAX_THREADS,MAX_THREADS>>> (gpu_dim,
-            MATRIX_K,
-            d_fp16_B,
-            rightTupleNum,
-            jNode->rightTable->attrType[jNode->rightKeyIndex]);
+    cudaErrCheck(cudaFree(gpu_dim));
     */
     
-    cudaErrCheck(cudaFree(gpu_dim));
 #endif
     clock_gettime(CLOCK_REALTIME, &fill_end); 
 
@@ -690,7 +936,6 @@ clock_gettime(CLOCK_REALTIME, &maskRED_start);
 #else
 
     // TODO: move this into RED after decouple
-    printf("Here!\n");
     setVector(h_red, MATRIX_N);
     CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(d_red, h_red, sizeof(float) * MATRIX_N, cudaMemcpyHostToDevice));
 #ifdef RED
@@ -858,8 +1103,20 @@ clock_gettime(CLOCK_REALTIME, &maskRED_end);
                 CUBLAS_COMPUTE_32F, CUBLAS_GEMM_DEFAULT_TENSOR_OP)); // CUDA 11
         cudaErrCheck(cudaFree(d_fp16_A));
         cudaErrCheck(cudaFree(d_fp16_BT));
+        
+        /* If has groupBy, after MM, then compute gbCount */
+        if (gbConstant != 1) { // print gbCount
+            CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&d_redMat, 1 * MATRIX_M * sizeof(char)));
+            CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&d_redMatFp16, 1 * MATRIX_M * sizeof(half)));
+            CUDA_SAFE_CALL_NO_SYNC(cudaMemset(d_redMat, 1, MATRIX_M * sizeof(char)));
+            convertCharToFp16 <<< (MATRIX_M + 255) / 256, 256 >>> (d_redMatFp16, 
+                d_redMat, MATRIX_M);
+        
+            //TODO: compute groupBy count by performing reduction
 
-        pageRankAdd<<< (MATRIX_M * MATRIX_N + 255) / 256, 256 >>> (c_cublas, MATRIX_M*MATRIX_N, pageRankAlpha, MATRIX_K);
+        }
+
+//        pageRankAdd<<< (MATRIX_M * MATRIX_N + 255) / 256, 256 >>> (c_cublas, MATRIX_M*MATRIX_N, pageRankAlpha, MATRIX_K);
         // verify result
         /*
         cudaErrCheck(cudaMemcpy(c_host_cublas, c_cublas, MATRIX_M * MATRIX_N * sizeof(float), cudaMemcpyDeviceToHost));

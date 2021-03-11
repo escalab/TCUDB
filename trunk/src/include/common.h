@@ -219,6 +219,7 @@ struct groupByNode{
     int tupleSize;              /* the size of the tuple in the join result */
 
     int * keepInGpu;            /* whether the results should be kept in gpu */
+
     /* additional var to store selectColIdx for Q3, Q4 */
     int numFuncExpCol;
     int * funcExpColIndex;       /* column index in FuncExp */

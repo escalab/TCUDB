@@ -844,6 +844,69 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
                 cudaErrCheck(cudaFree(gpu_dim));
                 cudaErrCheck(cudaFree(gpu_rdata));
 
+                printf("MxK:%dx%d\tKxN:%dx%d\n", MATRIX_M, MATRIX_K, MATRIX_K, MATRIX_N);
+                // TODO: have a logic to judge left/right?
+
+                printf("Running GemmEx (Group-by aggregates) on TCUs...\n");
+                cublasErrCheck(cublasGemmEx(cublasHandle, CUBLAS_OP_N, CUBLAS_OP_N,
+                        MATRIX_N, MATRIX_M, MATRIX_K,
+                        &alpha,
+                        d_fp16_BT, CUDA_R_16F, MATRIX_N,
+                        d_fp16_A, CUDA_R_16F, MATRIX_K,
+                        &beta,
+                        c_cublas, CUDA_R_32F, MATRIX_N,
+                        CUBLAS_COMPUTE_32F, CUBLAS_GEMM_DEFAULT_TENSOR_OP));
+                cudaErrCheck(cudaFree(d_fp16_A));
+                cudaErrCheck(cudaFree(d_fp16_BT));
+                
+                // If has groupBy, return gbCount after MM /
+                if (gbConstant != 1) {
+                    CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&d_redMat, 1 * MATRIX_M * sizeof(char)));
+                    CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&d_redMatFp16, 1 * MATRIX_M * sizeof(half)));
+                    CUDA_SAFE_CALL_NO_SYNC(cudaMemset(d_redMat, 1, MATRIX_M * sizeof(char)));
+                    convertCharToFp16 <<< (MATRIX_M + 255) / 256, 256 >>> (d_redMatFp16, 
+                        d_redMat, MATRIX_M);
+                
+                    //TODO: compute groupBy count by performing reduction
+                    half *temp_c;
+                    //CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&temp_c, MATRIX_M * gbMatWidth * sizeof(half)));
+                    CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&temp_c, MATRIX_M * MATRIX_N * sizeof(half)));
+                    
+                    //convertFp32ToFp16 <<< (MATRIX_M * gbMatWidth + 255) / 256, 256 >>> (temp_c, c_cublas, MATRIX_M * gbMatWidth);
+                    convertFp32ToFp16 <<< (MATRIX_M * MATRIX_N + 255) / 256, 256 >>> (temp_c, c_cublas, MATRIX_M * MATRIX_N);
+        
+                    float *d_reduction_res;
+                    CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&d_reduction_res, 1 * MATRIX_N * sizeof(float)));
+        
+                    printf("Perform groupBy reduction...\n");
+                    cublasErrCheck(cublasGemmEx(cublasHandle, CUBLAS_OP_N, CUBLAS_OP_N,
+                            //gbMatWidth, 1, MATRIX_M,
+                            MATRIX_N, 1, MATRIX_M,
+                            &alpha,
+                            //temp_c, CUDA_R_16F, gbMatWidth,
+                            temp_c, CUDA_R_16F, MATRIX_N,
+                            d_redMatFp16, CUDA_R_16F, MATRIX_M,
+                            &beta,
+                            //d_reduction_res, CUDA_R_32F, gbMatWidth,
+                            d_reduction_res, CUDA_R_32F, MATRIX_N,
+                            CUBLAS_COMPUTE_32F, CUBLAS_GEMM_DEFAULT_TENSOR_OP));
+        
+                    cudaErrCheck(cudaFree(temp_c));
+                    cudaErrCheck(cudaFree(d_redMatFp16));
+        
+                    // count number of column with values
+                    int *d_gbCount, *h_gbCount;
+                    CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&d_gbCount, 1 * sizeof(int)));
+                    CUDA_SAFE_CALL_NO_SYNC(cudaMemset(d_gbCount, 0, 1 * sizeof(int)));
+                    h_gbCount = (int*)malloc(1 * sizeof(int));
+                    
+                    //groupByCount<<<(gbMatWidth+255), 256>>> (d_reduction_res, gbMatWidth, d_gbCount);
+                    groupByCount<<<(MATRIX_N+255), 256>>> (d_reduction_res, MATRIX_N, d_gbCount);
+                    cudaErrCheck(cudaFree(d_reduction_res));
+                    cudaErrCheck(cudaMemcpy(h_gbCount, d_gbCount, 1 * sizeof(int), cudaMemcpyDeviceToHost));
+                    printf("GroupBy Count: %d\n", *h_gbCount);
+        
+                }
                 /*
                 gpu_fill_transpose<<<(MAX_THREADS+rightTupleNum-1)/MAX_THREADS,MAX_THREADS>>> (gpu_dim,
                     MATRIX_K,
@@ -1112,6 +1175,7 @@ clock_gettime(CLOCK_REALTIME, &maskRED_end);
 #else
     // NOTE: YDB's groupby is not group by clause but aggregate function
     // outdegree.sql, gb->gbExp[0].func == DESC
+    //TODO: modify the logic here -- if hasGroupBy return gbCount, else case return join_count
     if (gb && gb->gbExp[1].func == COUNT) {
         printf("Running GemmEx COUNT on TCUs...\n");
         cublasErrCheck(cublasGemmEx(cublasHandle, CUBLAS_OP_N, CUBLAS_OP_N,
@@ -1148,6 +1212,7 @@ clock_gettime(CLOCK_REALTIME, &maskRED_end);
         gb_count<<<(MATRIX_M + 255) / 256, 256>>> (red_sum, MATRIX_M, gbCount);
         clock_gettime(CLOCK_REALTIME, &gbCount_end);
     } else if (gb && gb->gbExp[0].func == SUM) { // no group by clause, only SUM
+        //TODO: this logic should be "groupBy"
         
         /*
         cublasErrCheck(cublasHgemm(cublasHandle, CUBLAS_OP_N, CUBLAS_OP_N,
@@ -1159,7 +1224,8 @@ clock_gettime(CLOCK_REALTIME, &maskRED_end);
                 c_fp16_cublas, MATRIX_N));
         */
         //printf("MxK:%dx%d\tKxN:%dx%d\n", MATRIX_M, MATRIX_K, MATRIX_K, gbMatWidth);
-        printf("MxK:%dx%d\tKxN:%dx%d\n", MATRIX_M, MATRIX_K, MATRIX_K, MATRIX_N);
+        
+        /*printf("MxK:%dx%d\tKxN:%dx%d\n", MATRIX_M, MATRIX_K, MATRIX_K, MATRIX_N);
         // TODO: have a logic to judge left/right?
 
         printf("Running GemmEx (Group-by aggregates) on TCUs...\n");
@@ -1221,7 +1287,7 @@ clock_gettime(CLOCK_REALTIME, &maskRED_end);
             cudaErrCheck(cudaMemcpy(h_gbCount, d_gbCount, 1 * sizeof(int), cudaMemcpyDeviceToHost));
             printf("GroupBy Count: %d\n", *h_gbCount);
 
-        }
+        }*/
 
 //        pageRankAdd<<< (MATRIX_M * MATRIX_N + 255) / 256, 256 >>> (c_cublas, MATRIX_M*MATRIX_N, pageRankAlpha, MATRIX_K);
         // verify result
@@ -1396,47 +1462,52 @@ clock_gettime(CLOCK_REALTIME, &maskRED_end);
 
 #else // not using Reduction, sum using cublasSasum
     clock_gettime(CLOCK_REALTIME, &count_start);
-    if (gb && (gb->gbExp[1].func == COUNT || gb->gbExp[0].func == COUNT)) {
-        int h_gbCount = 0;
-        cudaErrCheck(cudaMemcpy(&h_gbCount, gbCount, sizeof(int), cudaMemcpyDeviceToHost));
-        printf("groupBy count: %d\n", h_gbCount);
-        double gbCount_elapse = (gbCount_end.tv_sec -  gbCount_start.tv_sec)* BILLION + gbCount_end.tv_nsec - gbCount_start.tv_nsec;
-        printf("GroupBy Time: %lf(ms)\n", gbCount_elapse/(1000*1000));
+    if (gb->gbExp[0].func == SUM) {
 
     } else {
-        // previous calculate by cublasHgemm: need conversion
-        convertFp16ToFp32<<< (MATRIX_M * MATRIX_N + 255) / 256, 256 >>> (c_cublas, c_fp16_cublas, MATRIX_M * MATRIX_N);
-    }
 
-    uint64_t input_len = MATRIX_M*MATRIX_N;
-    int asum_len = 200000000; // Sasum addition per section
-
-    cublasStatus_t ret;
-    ret = cublasCreate(&cublasHandle);
-//    printf("input_len: %lu\n", input_len);
-
-    if (input_len < asum_len) {
-        float *cb_res = (float*)malloc(sizeof(float));
-        ret = cublasSasum(cublasHandle, MATRIX_M*MATRIX_N, c_cublas, 1, cb_res);
-        clock_gettime(CLOCK_REALTIME, &count_end);
-        printf("c_host_cublas sum: %.0f\n", *cb_res);
-    } else { // support on machine has sufficient device memory ~15GB
-        int num_sec = (int)(ceil(input_len/(float)asum_len));
-        int remain = input_len % asum_len;
-        float cb_res = 0;
-        uint64_t pos = 0;
-        uint64_t sum_res = 0;
-        int i;
-        for (i = 0; i < num_sec-1; i++) {
-            ret = cublasSasum(cublasHandle, asum_len, c_cublas+pos, 1, &cb_res);
-            pos += asum_len;
-            sum_res += (uint64_t)cb_res;
-            //printf("i: %d\tcb_res: %f\tsum_res: %lu\n",i,cb_res,sum_res);
+        if (gb && (gb->gbExp[1].func == COUNT || gb->gbExp[0].func == COUNT)) {
+            int h_gbCount = 0;
+            cudaErrCheck(cudaMemcpy(&h_gbCount, gbCount, sizeof(int), cudaMemcpyDeviceToHost));
+            printf("groupBy count: %d\n", h_gbCount);
+            double gbCount_elapse = (gbCount_end.tv_sec -  gbCount_start.tv_sec)* BILLION + gbCount_end.tv_nsec - gbCount_start.tv_nsec;
+            printf("GroupBy Time: %lf(ms)\n", gbCount_elapse/(1000*1000));
+    
+        } else {
+            // previous calculate by cublasHgemm: need conversion
+            convertFp16ToFp32<<< (MATRIX_M * MATRIX_N + 255) / 256, 256 >>> (c_cublas, c_fp16_cublas, MATRIX_M * MATRIX_N);
         }
-        ret = cublasSasum(cublasHandle, remain, c_cublas+pos, 1, &cb_res);
-        sum_res += (uint64_t)cb_res;
-        clock_gettime(CLOCK_REALTIME, &count_end);
-        printf("c_host_cublas sum: %lu\n", sum_res);
+    
+        uint64_t input_len = MATRIX_M*MATRIX_N;
+        int asum_len = 200000000; // Sasum addition per section
+    
+        cublasStatus_t ret;
+        ret = cublasCreate(&cublasHandle);
+    //    printf("input_len: %lu\n", input_len);
+    
+        if (input_len < asum_len) {
+            float *cb_res = (float*)malloc(sizeof(float));
+            ret = cublasSasum(cublasHandle, MATRIX_M*MATRIX_N, c_cublas, 1, cb_res);
+            clock_gettime(CLOCK_REALTIME, &count_end);
+            printf("c_host_cublas sum: %.0f\n", *cb_res);
+        } else { // support on machine has sufficient device memory ~15GB
+            int num_sec = (int)(ceil(input_len/(float)asum_len));
+            int remain = input_len % asum_len;
+            float cb_res = 0;
+            uint64_t pos = 0;
+            uint64_t sum_res = 0;
+            int i;
+            for (i = 0; i < num_sec-1; i++) {
+                ret = cublasSasum(cublasHandle, asum_len, c_cublas+pos, 1, &cb_res);
+                pos += asum_len;
+                sum_res += (uint64_t)cb_res;
+                //printf("i: %d\tcb_res: %f\tsum_res: %lu\n",i,cb_res,sum_res);
+            }
+            ret = cublasSasum(cublasHandle, remain, c_cublas+pos, 1, &cb_res);
+            sum_res += (uint64_t)cb_res;
+            clock_gettime(CLOCK_REALTIME, &count_end);
+            printf("c_host_cublas sum: %lu\n", sum_res);
+        }
     }
 #endif
     printf("cublasEX tensor cores (FP16) took %fms\n", cublasEXTime);

@@ -304,6 +304,16 @@ __host__ static void setRed(short *red, int n) {
         red[i] = (short)1;
 }
 
+/* only for small matrix result verification. */
+__host__ static void print_matrix(float *mat, int rows, int cols) {
+    for (int i = 0; i < rows * cols; i++) {
+        printf("%.0f\t", mat[i]);
+        if ((i+1) % cols == 0) {
+            printf("\n");
+        }
+    }
+}
+
 /* Get column index from aggregate function for later data copy. */
 __host__ static void getValIndex(struct joinNode *jNode, struct groupByNode *gb, int *lValIndex, int *rValIndex, int &lgbIndex, int &rgbIndex, int &dataColIndex) {
 
@@ -479,9 +489,6 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
         }
     }
 
-    // TODO: determine which table to copy value column (left/right or both)
-    // column index are leftOutputIndex[0] or rightOutputIndex[0]
-    printf("numFuncExpCol: %d\n", gb->numFuncExpCol); // determine number of data column to be copied
 
     int *lValIndex, *rValIndex;
     int dataColIndex = -1;
@@ -493,11 +500,14 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
 
     // get data value index from gbNode
     getValIndex(jNode, gb, lValIndex, rValIndex, lgbIndex, rgbIndex, dataColIndex);
+#ifdef DEBUG
+    printf("numFuncExpCol: %d\n", gb->numFuncExpCol); // determine number of data column to be copied
     printf("lValIndex[0]: %d\n", lValIndex[0]); // data copy from lValIndex
     printf("rValIndex[0]: %d\n", rValIndex[0]);
     printf("lgbIndex: %d\n", lgbIndex); // data copy from lValIndex
     printf("rgbIndex: %d\n", rgbIndex);
     printf("dataColIndex: %d\n", dataColIndex);
+#endif
 
 
 #ifdef PAGERANK
@@ -514,13 +524,6 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
     clock_gettime(CLOCK_REALTIME, &tcu_start);
     clock_gettime(CLOCK_REALTIME, &init_start);
 
-/*
-    printf("Left Tuple #: %d\n", leftTupleNum);
-    printf("Right Tuple #: %d\n", rightTupleNum);
-    printf("MATRIX_M: %lu\n", MATRIX_M);
-    printf("MATRIX_N: %lu\n", MATRIX_N);
-    printf("MATRIX_K: %lu\n", MATRIX_K);
-*/
 #ifdef PAGERANK
     //printf("PageRank Alpha: %.3f\n", pageRankAlpha);
     //printf("(1-alpha)/#node: %.6f\n", (1-pageRankAlpha)/MATRIX_K);
@@ -618,12 +621,16 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
 
     if (lValIndex[0] != -1 || lgbIndex != -1) {
         CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&gpu_ldata,foreignKeySize));
+#ifdef DEBUG
         printf("cudaMalloc left_data column\n");
+#endif
     }
 
     if (rValIndex[0] != -1 || rgbIndex != -1) {
         CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&gpu_rdata,primaryKeySize));
+#ifdef DEBUG
         printf("cudaMalloc right_data column\n");
+#endif
     }
 #ifdef MICRO
     CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&gpu_fact_j,foreignKeySize));
@@ -653,10 +660,9 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
 
 #else
     c_host_cublas = (float*)calloc(MATRIX_M*MATRIX_N, sizeof(float));
-    //TODO: seems need to move cudaMalloc into if-condition to dynamically adjust size
-    printf("cudaMalloc here\n");
     CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&c_cublas,(uint64_t)MATRIX_M*(uint64_t)MATRIX_N*sizeof(float)));
     CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&d_fp16_A,(uint64_t)MATRIX_M*(uint64_t)MATRIX_K*sizeof(half)));
+    //TODO:d_fp16_B only be used for MICRO and OUTDEGREE
     CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&d_fp16_B,(uint64_t)MATRIX_N*(uint64_t)MATRIX_K*sizeof(half)));
     CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&d_fp16_BT,(uint64_t)MATRIX_K*(uint64_t)MATRIX_N*sizeof(half)));
 #endif //end of OUTDEGREE
@@ -702,9 +708,7 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
 
     CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(gpu_fact,jNode->leftTable->content[jNode->leftKeyIndex], foreignKeySize,cudaMemcpyHostToDevice));
     CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(gpu_dim,jNode->rightTable->content[jNode->rightKeyIndex], primaryKeySize,cudaMemcpyHostToDevice));
-    // ystree.py gen_column_index generates index for select_list first
-    // joined attr with -1 index which means the last index
-    // other attr indices follow the sequence without certain getter function to access
+
     CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(gpu_fact_j,jNode->leftTable->content[0], foreignKeySize,cudaMemcpyHostToDevice));
     CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(gpu_dim_j,jNode->rightTable->content[0], primaryKeySize,cudaMemcpyHostToDevice));
     CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(gpu_fact_val,jNode->leftTable->content[1], foreignKeySize,cudaMemcpyHostToDevice));
@@ -755,24 +759,21 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
 
 #else //  MM for join count
 
-    // cudaMemcpyHostToDevice raw data->char *column
     clock_gettime(CLOCK_REALTIME, &cuMemcpy_start);
     CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(gpu_fact,jNode->leftTable->content[jNode->leftKeyIndex], foreignKeySize,cudaMemcpyHostToDevice));
     CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(gpu_dim,jNode->rightTable->content[jNode->rightKeyIndex], primaryKeySize,cudaMemcpyHostToDevice));
     if (lValIndex[0] != -1 || lgbIndex != -1) {
         CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(gpu_ldata,jNode->leftTable->content[dataColIndex], foreignKeySize,cudaMemcpyHostToDevice));
+#ifdef DEBUG
         printf("cudaMemcpy gpu_ldata\n");
+#endif
     }
     if (rValIndex[0] != -1 || rgbIndex != -1) {
         CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(gpu_rdata,jNode->rightTable->content[dataColIndex], primaryKeySize,cudaMemcpyHostToDevice));
+#ifdef DEBUG
         printf("cudaMemcpy gpu_rdata\n");
+#endif
     }
-
-    /*for (int i = 0; i < 5; i ++) {
-        int *value   = (int*)&jNode->leftTable->content[0][i*4];
-        printf("%d\n", *value);
-    }*/
-
 
 #ifdef PAGERANK  // pagerank requires additional float value instead of filling 0/1
     int factCol = jNode->leftOutputIndex[jNode->leftOutputAttrNum-1];
@@ -812,18 +813,12 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
         CUDA_SAFE_CALL_NO_SYNC(cudaMemset(c_cublas,0,(uint64_t)MATRIX_M*(uint64_t)MATRIX_N*sizeof(float)));
     }
 #else // query ask for join counts except for OUTDEGREE, MICRO, PAGERANK
-    //TODO: call corresponding filling method (check SQL pattern)
+    //TODO: call corresponding filling method, COUNT aggFunc later
     if (gb->gbExp[gb->aggFuncIndex].func == SUM) {
-        //printf("Query contains SUM\n");
 
-        if (gb->numFuncExpCol == 1) { // Q3
-            // judge whether to pass left or right data column
-           // printf("rValIndex[0]\n", rValIndex[0]);
-           // printf("lValIndex[0]\n", lValIndex[0]);
-            if (rValIndex[0] == -1) // pass left 
+        if (gb->numFuncExpCol == 1) {
+            if (rValIndex[0] == -1)
             {
-               // getMaxValGPU(char *column, size_t tupleNum, int attrType, int *maxVal);
-                // gpu_fill_data (left), gpu_fill_transpose (right)
                 gpu_fill_data<<<(MAX_THREADS+leftTupleNum-1)/MAX_THREADS,MAX_THREADS>>> (gpu_fact,
                     gpu_ldata,    
                     MATRIX_K,
@@ -833,7 +828,6 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
 
                 cudaErrCheck(cudaFree(gpu_fact));
                 cudaErrCheck(cudaFree(gpu_ldata));
-                // TODO: right fill with ones_gb
                 
                 gpu_fill_gb_transpose<<<(MAX_THREADS+rightTupleNum-1)/MAX_THREADS,MAX_THREADS>>> (
                         gpu_dim,
@@ -847,8 +841,6 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
                 cudaErrCheck(cudaFree(gpu_rdata));
 
                 printf("MxK:%dx%d\tKxN:%dx%d\n", MATRIX_M, MATRIX_K, MATRIX_K, MATRIX_N);
-                // TODO: have a logic to judge left/right?
-
                 printf("Running GemmEx (Group-by aggregates) on TCUs...\n");
                 cublasErrCheck(cublasGemmEx(cublasHandle, CUBLAS_OP_N, CUBLAS_OP_N,
                         MATRIX_N, MATRIX_M, MATRIX_K,
@@ -861,7 +853,6 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
                 cudaErrCheck(cudaFree(d_fp16_A));
                 cudaErrCheck(cudaFree(d_fp16_BT));
                 
-                // If has groupBy, return gbCount after MM /
                 if (gbConstant != 1) {
                     CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&d_redMat, 1 * MATRIX_M * sizeof(char)));
                     CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&d_redMatFp16, 1 * MATRIX_M * sizeof(half)));
@@ -870,12 +861,10 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
                         d_redMat, MATRIX_M);
                     cudaErrCheck(cudaFree(d_redMat));
                 
-                    //TODO: compute groupBy count by performing reduction
+                    // compute groupBy count by performing reduction
                     half *temp_c;
-                    //CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&temp_c, MATRIX_M * gbMatWidth * sizeof(half)));
                     CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&temp_c, MATRIX_M * MATRIX_N * sizeof(half)));
                     
-                    //convertFp32ToFp16 <<< (MATRIX_M * gbMatWidth + 255) / 256, 256 >>> (temp_c, c_cublas, MATRIX_M * gbMatWidth);
                     convertFp32ToFp16 <<< (MATRIX_M * MATRIX_N + 255) / 256, 256 >>> (temp_c, c_cublas, MATRIX_M * MATRIX_N);
                     cudaErrCheck(cudaFree(c_cublas));
         
@@ -884,27 +873,22 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
         
                     printf("Perform groupBy reduction...\n");
                     cublasErrCheck(cublasGemmEx(cublasHandle, CUBLAS_OP_N, CUBLAS_OP_N,
-                            //gbMatWidth, 1, MATRIX_M,
                             MATRIX_N, 1, MATRIX_M,
                             &alpha,
-                            //temp_c, CUDA_R_16F, gbMatWidth,
                             temp_c, CUDA_R_16F, MATRIX_N,
                             d_redMatFp16, CUDA_R_16F, MATRIX_M,
                             &beta,
-                            //d_reduction_res, CUDA_R_32F, gbMatWidth,
                             d_reduction_res, CUDA_R_32F, MATRIX_N,
                             CUBLAS_COMPUTE_32F, CUBLAS_GEMM_DEFAULT_TENSOR_OP));
         
                     cudaErrCheck(cudaFree(temp_c));
                     cudaErrCheck(cudaFree(d_redMatFp16));
         
-                    // count number of column with values
                     int *d_gbCount, *h_gbCount;
                     CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&d_gbCount, 1 * sizeof(int)));
                     CUDA_SAFE_CALL_NO_SYNC(cudaMemset(d_gbCount, 0, 1 * sizeof(int)));
                     h_gbCount = (int*)malloc(1 * sizeof(int));
                     
-                    //groupByCount<<<(gbMatWidth+255), 256>>> (d_reduction_res, gbMatWidth, d_gbCount);
                     groupByCount<<<(MATRIX_N+255), 256>>> (d_reduction_res, MATRIX_N, d_gbCount);
                     cudaErrCheck(cudaFree(d_reduction_res));
                     cudaErrCheck(cudaMemcpy(h_gbCount, d_gbCount, 1 * sizeof(int), cudaMemcpyDeviceToHost));
@@ -912,19 +896,9 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
                     printf("GroupBy Count: %d\n", *h_gbCount);
         
                 }
-                /*
-                gpu_fill_transpose<<<(MAX_THREADS+rightTupleNum-1)/MAX_THREADS,MAX_THREADS>>> (gpu_dim,
-                    MATRIX_K,
-                    d_fp16_BT,
-                    rightTupleNum,
-                    jNode->rightTable->attrType[jNode->rightKeyIndex]);
-
-                cudaErrCheck(cudaFree(gpu_dim));
-                */
             } 
-            else if (lValIndex[0] == -1)// pass right 
+            else if (lValIndex[0] == -1) 
             {
-                // matA -> gbMatWidth(max(A.Val)+1) x MATRIX_K
                 gpu_fill_gb<<<(MAX_THREADS+leftTupleNum-1)/MAX_THREADS,MAX_THREADS>>> (
                         gpu_fact,
                         gpu_ldata,    
@@ -935,7 +909,6 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
                 cudaErrCheck(cudaFree(gpu_fact));
                 cudaErrCheck(cudaFree(gpu_ldata));
 
-                // MATRIX_K x MATRIX_N
                 gpu_fill_data_transpose<<<(MAX_THREADS+rightTupleNum-1)/MAX_THREADS,MAX_THREADS>>> (
                         gpu_dim,
                         gpu_rdata,
@@ -947,8 +920,6 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
                 cudaErrCheck(cudaFree(gpu_rdata));
 
                 printf("MxK:%dx%d\tKxN:%dx%d\n", MATRIX_M, MATRIX_K, MATRIX_K, MATRIX_N);
-                // TODO: have a logic to judge left/right?
-
                 printf("Running GemmEx (Group-by aggregates) on TCUs...\n");
                 cublasErrCheck(cublasGemmEx(cublasHandle, CUBLAS_OP_N, CUBLAS_OP_N,
                         MATRIX_N, MATRIX_M, MATRIX_K,
@@ -969,12 +940,9 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
                         d_redMat, MATRIX_N);
                     cudaErrCheck(cudaFree(d_redMat));
                 
-                    //TODO: compute groupBy count by performing reduction
                     half *temp_c;
-                    //CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&temp_c, MATRIX_M * gbMatWidth * sizeof(half)));
                     CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&temp_c, MATRIX_M * MATRIX_N * sizeof(half)));
                     
-                    //convertFp32ToFp16 <<< (MATRIX_M * gbMatWidth + 255) / 256, 256 >>> (temp_c, c_cublas, MATRIX_M * gbMatWidth);
                     convertFp32ToFp16 <<< (MATRIX_M * MATRIX_N + 255) / 256, 256 >>> (temp_c, c_cublas, MATRIX_M * MATRIX_N);
                     cudaErrCheck(cudaFree(c_cublas));
         
@@ -983,37 +951,73 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
         
                     printf("Perform groupBy reduction...\n");
                     cublasErrCheck(cublasGemmEx(cublasHandle, CUBLAS_OP_N, CUBLAS_OP_N,
-                            //gbMatWidth, 1, MATRIX_M,
                             1, MATRIX_M, MATRIX_N,
                             &alpha,
-                            //temp_c, CUDA_R_16F, gbMatWidth,
                             d_redMatFp16, CUDA_R_16F, 1,
                             temp_c, CUDA_R_16F, MATRIX_N,
                             &beta,
-                            //d_reduction_res, CUDA_R_32F, gbMatWidth,
                             d_reduction_res, CUDA_R_32F, 1,
                             CUBLAS_COMPUTE_32F, CUBLAS_GEMM_DEFAULT_TENSOR_OP));
         
                     cudaErrCheck(cudaFree(temp_c));
                     cudaErrCheck(cudaFree(d_redMatFp16));
         
-                    // count number of column with values
                     int *d_gbCount, *h_gbCount;
                     CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&d_gbCount, 1 * sizeof(int)));
                     CUDA_SAFE_CALL_NO_SYNC(cudaMemset(d_gbCount, 0, 1 * sizeof(int)));
                     h_gbCount = (int*)malloc(1 * sizeof(int));
                     
-                    //groupByCount<<<(gbMatWidth+255), 256>>> (d_reduction_res, gbMatWidth, d_gbCount);
                     groupByCount<<<(MATRIX_M+255), 256>>> (d_reduction_res, MATRIX_M, d_gbCount);
                     cudaErrCheck(cudaFree(d_reduction_res));
                     cudaErrCheck(cudaMemcpy(h_gbCount, d_gbCount, 1 * sizeof(int), cudaMemcpyDeviceToHost));
                     cudaErrCheck(cudaFree(d_gbCount));
                     printf("GroupBy Count: %d\n", *h_gbCount);
-        
+
                 }
             }
         }
-        else if (gb->numFuncExpCol == 2) { // Q4, gb->numFuncExpCol == 2
+        else if (gb->numFuncExpCol == 2 && gb->math_op == MULTIPLY) {
+                gpu_fill_data<<<(MAX_THREADS+leftTupleNum-1)/MAX_THREADS,MAX_THREADS>>> (gpu_fact,
+                    gpu_ldata,    
+                    MATRIX_K,
+                    d_fp16_A,
+                    leftTupleNum,
+                    jNode->leftTable->attrType[jNode->leftKeyIndex]);
+
+                cudaErrCheck(cudaFree(gpu_fact));
+                cudaErrCheck(cudaFree(gpu_ldata));
+
+                gpu_fill_data_transpose<<<(MAX_THREADS+rightTupleNum-1)/MAX_THREADS,MAX_THREADS>>> (
+                        gpu_dim,
+                        gpu_rdata,
+                        MATRIX_N,
+                        d_fp16_BT,
+                        rightTupleNum,
+                        jNode->rightTable->attrType[jNode->rightKeyIndex]);
+                cudaErrCheck(cudaFree(gpu_dim));
+                cudaErrCheck(cudaFree(gpu_rdata));
+
+                printf("MxK:%dx%d\tKxN:%dx%d\n", MATRIX_M, MATRIX_K, MATRIX_K, MATRIX_N);
+                printf("Running GemmEx (Aggregation) on TCUs...\n");
+                cublasErrCheck(cublasGemmEx(cublasHandle, CUBLAS_OP_N, CUBLAS_OP_N,
+                        MATRIX_N, MATRIX_M, MATRIX_K,
+                        &alpha,
+                        d_fp16_BT, CUDA_R_16F, MATRIX_N,
+                        d_fp16_A, CUDA_R_16F, MATRIX_K,
+                        &beta,
+                        c_cublas, CUDA_R_32F, MATRIX_N,
+                        CUBLAS_COMPUTE_32F, CUBLAS_GEMM_DEFAULT_TENSOR_OP));
+                cudaErrCheck(cudaFree(d_fp16_A));
+                cudaErrCheck(cudaFree(d_fp16_BT));
+
+#ifdef DEBUG
+                float *testRes;
+                testRes = (float*)malloc(MATRIX_M * MATRIX_N * sizeof(float));
+                cudaErrCheck(cudaMemcpy(testRes, c_cublas, MATRIX_M * MATRIX_N * sizeof(float), cudaMemcpyDeviceToHost));
+
+                print_matrix(testRes, MATRIX_M, MATRIX_N);
+#endif
+
 
         }
         
@@ -1021,44 +1025,6 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
 
     }
 
-    /* If has groupBy, after MM, then compute gbCount */
-/*    if (gbConstant != 1) { // print gbCount
-        CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&d_redMat, 1 * MATRIX_M * sizeof(char)));
-        CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&d_redMatFp16, 1 * MATRIX_M * sizeof(half)));
-        CUDA_SAFE_CALL_NO_SYNC(cudaMemset(d_redMat, 1, MATRIX_M * sizeof(char)));
-        convertCharToFp16 <<< (MATRIX_M + 255) / 256, 256 >>> (d_redMatFp16, 
-                d_redMat, MATRIX_M);
-        
-        // compute groupBy count by performing reduction
-
-    }*/
-
-    /*
-     Q3
-     Need to determine take left/right data column and groupBy which table? => gbLeftRight
-     0: left, 1: right
-     1 -- either lValIndex or rValIndex is -1, one as actual value, the other as 1
-     */
-    /*
-    if (gb->numFuncExpCol == 1) {
-        // judge whether to pass left or right data column
-        if (rValIndex[0] == -1) // pass left 
-        {
-            // gpu_fill_data (left), gpu_fill_transpose (right)
-
-        } 
-        else if (lValIndex[0] == -1)// pass right 
-        {
-            // call gpu_fill (left), gpu_fill_transpose_data (right)
-
-        }
-    }*/
-
-    /*
-     Q4
-     if (gb->math_op == MULTIPLY && (lValIndex[0] != -1 && rValIndex[0] != -1))
-     both lValIndex/rValIndex are not -1, all pass value into func 
-     */
 
     /*
      Else case -- leave it with the general matrix multiplication => return join_count
@@ -1088,8 +1054,6 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
 #elif CUBLAS
 
 #ifdef MICRO
-    //int A_tupleNum = jNode->leftTable->tupleNum;
-    //int B_tupleNum = jNode->rightTable->tupleNum;
 
     clock_gettime(CLOCK_REALTIME, &cuMemcpy_start);
     CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(gpu_fact,jNode->leftTable->content[jNode->leftKeyIndex], foreignKeySize,cudaMemcpyHostToDevice));
@@ -1238,13 +1202,10 @@ clock_gettime(CLOCK_REALTIME, &maskRED_end);
                 d_fp16_A, CUDA_R_16F, MATRIX_K,
                 &beta,
                 c_cublas, CUDA_R_32F, MATRIX_N,
-                //CUDA_R_32F, CUBLAS_GEMM_DFALT_TENSOR_OP)); // tcu
                 CUBLAS_COMPUTE_32F, CUBLAS_GEMM_DEFAULT_TENSOR_OP)); // CUDA 11
     cudaErrCheck(cudaFree(d_fp16_A));
     cudaErrCheck(cudaFree(d_fp16_BT));
 #else
-    // NOTE: YDB's groupby is not group by clause but aggregate function
-    // outdegree.sql, gb->gbExp[0].func == DESC
     //TODO: modify the logic here -- if hasGroupBy return gbCount, else case return join_count
     if (gb && gb->gbExp[1].func == COUNT) {
         printf("Running GemmEx COUNT on TCUs...\n");
@@ -1268,7 +1229,6 @@ clock_gettime(CLOCK_REALTIME, &maskRED_end);
                 c_cublas, CUDA_R_32F, MATRIX_N,
                 &beta,
                 red_sum, CUDA_R_32F, 1,
-                //CUDA_R_32F, CUBLAS_GEMM_DFALT_TENSOR_OP)); // tcu
                 CUBLAS_COMPUTE_32F, CUBLAS_GEMM_DEFAULT_TENSOR_OP)); // CUDA 11
 
         
@@ -1383,7 +1343,6 @@ clock_gettime(CLOCK_REALTIME, &maskRED_end);
                 d_fp16_A, CUDA_R_16F, MATRIX_K,
                 &beta,
                 c_cublas, CUDA_R_32F, MATRIX_N,
-                //CUDA_R_32F, CUBLAS_GEMM_DFALT_TENSOR_OP)); // tcu
                 CUBLAS_COMPUTE_32F, CUBLAS_GEMM_DEFAULT_TENSOR_OP)); // CUDA 11
         cudaErrCheck(cudaFree(d_fp16_A));
         cudaErrCheck(cudaFree(d_fp16_BT));
@@ -1395,10 +1354,9 @@ clock_gettime(CLOCK_REALTIME, &maskRED_end);
                 c_cublas, CUDA_R_32F, MATRIX_N,
                 &beta,
                 test_red, CUDA_R_32F, 1,
-                //CUDA_R_32F, CUBLAS_GEMM_DFALT_TENSOR_OP)); // tcu
                 CUBLAS_COMPUTE_32F, CUBLAS_GEMM_DEFAULT_TENSOR_OP)); // CUDA 11
 
-        // TODO: need to reduce one time (groupBy) then count 
+        // TODO: this can be removed since groupBy already be handled 
 //        cublasStatus_t ret;
 //        ret = cublasCreate(&cublasHandle);
 //        float *cb_res = (float*)malloc(sizeof(float));
@@ -1447,7 +1405,7 @@ clock_gettime(CLOCK_REALTIME, &maskRED_end);
 
     // return groupBy count
     if (gb && gb->gbExp[1].func == COUNT) {
-        // FIXME: why red_sum is 0, gb_count check 0.0 or 0?
+        // FIXME: red_sum is 0, gb_count check 0.0 or 0?
         gb_count<<<(MATRIX_M + 255) / 256, 256>>> (red_sum, MATRIX_M, gbCount);
     }
     
@@ -1530,7 +1488,7 @@ clock_gettime(CLOCK_REALTIME, &maskRED_end);
 #elif OUTDEGREE
 // do nothing for now
 
-#else // not using Reduction, sum using cublasSasum
+#else // not using Reduction, sum(join_count) using cublasSasum
     clock_gettime(CLOCK_REALTIME, &count_start);
     if (gb->gbExp[0].func == SUM) {
 

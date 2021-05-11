@@ -46,7 +46,9 @@ tcu: tableScan.cu tcuJoin.cu cuckoo.cu
 	$(NVCC) -c -g $(GENCODE_FLAGS) -DCUBLAS_HALF tableScan.cu tcuJoin.cu 
 #	$(NVCC) -c -g $(GENCODE_FLAGS) -DCUBLAS_HALF -DOUTDEGREE tableScan.cu hashJoin.cu tcuJoin.cu cuckoo.cu inviJoin.cu materialize.cu groupby.cu orderBy.cu 
 #	$(NVCC) -c -g $(GENCODE_FLAGS) -DCUBLAS -DMICRO tableScan.cu hashJoin.cu tcuJoin.cu cuckoo.cu inviJoin.cu materialize.cu groupby.cu orderBy.cu 
-
+split: msplitKernel.cu msplit.cu tableScan.cu
+	$(NVCC) -c -g $(GENCODE_FLAGS) msplitKernel.cu msplit.cu tableScan.cu
+	
 all: tcudb
 
 clean:

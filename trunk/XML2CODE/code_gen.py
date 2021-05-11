@@ -868,6 +868,7 @@ def generate_code(tree):
         print >>fo, "#include \"../include/inviJoin.h\""
     else: # joinType == 2
         print >>fo, "#include \"../include/tcuJoin.h\""
+        print >>fo, "#include \"../include/blockJoin.h\""
 
     print >>fo, "#include \"../include/schema.h\""
 
@@ -888,7 +889,7 @@ def generate_code(tree):
             print >>fo, "extern char* materializeCol(struct materializeNode * mn, struct statistic *);"
         else: # joinType == 2
             print >>fo, "extern struct tableNode* tcuJoin(struct joinNode *, struct statistic *, int *, struct groupByNode *);"
-            #print >>fo, "extern struct tableNode* groupBy(struct groupByNode *,struct statistic *);"
+            print >>fo, "extern struct tableNode* blockJoin(struct joinNode *,struct statistic *);"
 
     else:              
         print >>fo, "#include <CL/cl.h>"
@@ -975,8 +976,6 @@ def generate_code(tree):
     print >>fo, "\t\t}"
     print >>fo, "\t}\n"
 
-#TODO: modify logic here, gb_val is not mandatory for all cases
-
     if joinType == 2:
         print >>fo, "\tif(path == NULL || *matrix_dim_ptr == 0){"
         print >>fo, "\t\tprintf(\"Mandatory argument(s) missing, e.g. --datadir, --matrix_dim\\n\");"
@@ -1037,6 +1036,7 @@ def generate_code(tree):
 
         selectList = tn.select_list.tmp_exp_list
 
+        # read column binary
         for i in range(0,totalAttr):
             col = colList[i]
             ctype = to_ctype(col.column_type)
@@ -1606,6 +1606,8 @@ def generate_code(tree):
 
             print >>fo, "\t\t" + jName + ".rightKeyIndex = " + str(joinAttr.dimIndex[i]) + ";"
             print >>fo, "\t\t" + jName + ".leftKeyIndex = " + str(joinAttr.factIndex[i]) + ";"
+
+            # TODO: write some logic to call MSplit here, knobs: tupleNum over threshold?
 
             if CODETYPE == 0:
                 print >>fo, "\t\tstruct tableNode *join" + str(i) + " = hashJoin(&" + jName + ",&pp);\n"
@@ -2432,12 +2434,12 @@ def generate_code(tree):
             print >>fo, "\t\t" + jName + ".rightKeyIndex = " + str(joinAttr.dimIndex[i]) + ";"
             print >>fo, "\t\t" + jName + ".leftKeyIndex = " + str(joinAttr.factIndex[i]) + ";"
 
-            #TODO: extract outputIndex and Pos
+            # extract outputIndex and Pos
             lOutLen = len(lOutList)
             rOutLen = len(rOutList)
           #  print >>fo, "\t\t" + "printf(lOut:" + str(lOutLen)+ " rOut:" + str(rOutLen) + ");"
 
-            # construct gbNode info (allows tcuJoin to call corresponding filling methods)
+            # pass gbNode info to tcuJoin node
             if joinType == 2:
                 if (i == len(joinAttr.dimTables)-1 and len(aggNode) > 0):
                     gb_exp_list = aggNode[0].group_by_clause.groupby_exp_list
@@ -2500,7 +2502,7 @@ def generate_code(tree):
                             print >>fo, "\t\tgbNode->attrSize[" + str(i) + "] = sizeof(float);"
                             print >>fo, "\t\tgbNode->gbExp["+str(i)+"].func = " + exp.func_name + ";"
                             # memorize the index of SUM func
-                            if (exp.func_name == "SUM"):
+                            if (exp.func_name == "SUM" or exp.func_name == "COUNT"):
                                 print >>fo, "\t\tgbNode->aggFuncIndex = "+str(i)+";"
                             else:
                                 print >>fo, "\t\tgbNode->aggFuncIndex = "+"-1;"
@@ -2581,7 +2583,6 @@ def generate_code(tree):
                             print >>fo, "\t\tgbNode->gbExp[" + str(i) + "].exp.opNum = 1;"
                             print >>fo, "\t\tgbNode->gbExp[" + str(i) + "].exp.opType = CONS;"
                             print >>fo, "\t\tgbNode->gbExp[" + str(i) + "].exp.opValue = " + str(exp.cons_value) + ";"
-                            print >>fo, "\t\t" + str(000000000) + ";"
                             #print >>fo, "\t\tgbNode->gbExp[" + str(i) + "].exp.consValue = " + str(exp.cons_value) + ";"
                             # until this point
     

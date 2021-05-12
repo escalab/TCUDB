@@ -47,7 +47,9 @@ using namespace nvcuda;
 #define cudaErrCheck(stat) { cudaErrCheck_((stat), __FILE__, __LINE__); }
 void cudaErrCheck_(cudaError_t stat, const char *file, int line) {
     if (stat != cudaSuccess) {
-        fprintf(stderr, "CUDA Error: %s %s %d\n", cudaGetErrorString(stat), file, line);
+        fprintf(stderr, "CUDA Error: %s %s %d\n",
+                cudaGetErrorString(stat),
+                file, line);
     }
 }
 
@@ -64,7 +66,7 @@ void* cublasCreateThread(void *x)
 {
     cublasHandle_t* cublasHandle = (cublasHandle_t *)x;
     cublasErrCheck(cublasCreate(cublasHandle));
-    cublasErrCheck(cublasSetMathMode(*cublasHandle, CUBLAS_TENSOR_OP_MATH));
+    cublasErrCheck(cublasSetMathMode(*cublasHandle,CUBLAS_TENSOR_OP_MATH));
     return NULL;
 }
 
@@ -407,6 +409,30 @@ __global__ void getMaxValGPU(char *column, size_t tupleNum, int attrType, int *m
     }
 }
 
+struct gpu_timer {
+    gpu_timer() {
+        cudaEventCreate(&m_start);
+        cudaEventCreate(&m_end);
+        cudaEventRecord(m_start, 0);
+    }
+
+    float milliseconds_elapsed() {
+        float elapsed_time;
+        cudaEventRecord(m_end, 0);
+        cudaEventSynchronize(m_end);
+        cudaEventElapsedTime(&elapsed_time, m_start, m_end);
+        return elapsed_time;      
+    }
+
+    float seconds_elapsed() {
+        return milliseconds_elapsed() / 1000.0;
+    }
+
+  protected:
+    cudaEvent_t m_start, m_end;
+};
+
+
 /*
  * tcuJoinn using NVIDIA's cuBLAS lib to perform matrix multiplication and aggregation.
  *
@@ -435,10 +461,13 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
         int *matrix_dim, struct groupByNode *gb)
 {
 
-    struct timespec tcu_start, tcu_end;
-    struct timespec init_start, init_end;
-    struct timespec fill_start, fill_end;
-    struct timespec cuMemcpy_start, cuMemcpy_end;
+    //struct timespec tcu_start, tcu_end;
+    //struct timespec init_start, init_end;
+    //struct timespec cuMemcpy_start, cuMemcpy_end;
+    //struct timespec fill_start, fill_end;
+//    struct timespec count_start, count_end;
+    float initTime, cudaMemcpyTime, fillTime, end2endTime;
+    float tcu_compute_time, tcu_groupBy_time;
 
     struct tableNode * res = NULL;
     int leftTupleNum  = jNode->leftTable->tupleNum;
@@ -451,7 +480,6 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
     res->tupleSize = jNode->tupleSize;
     printf("res->totalAttr: %d\n", res->totalAttr);
     printf("res->tupleSize: %d\n", res->tupleSize);
-    printf("gb groupByColNum: %d\n", gb->groupByColNum);
 
     MATRIX_K = *matrix_dim; // user input, matrix width(#unique values)
     MATRIX_M = leftTupleNum;
@@ -469,6 +497,7 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
     }
     
     // update MATRIX_M or MATRIX_N given groupBy keyword
+    // FIXME: pure matrix-multiplication result may be affected
     if (gbConstant != 1) { // contains groupBy keyword
         char *gb_column;
         // linear scan to find the max value of groupBy column 
@@ -477,14 +506,16 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
             gb_column = jNode->leftTable->content[gb->groupByIndex[0]];
 
             gbMatWidth = getMaxVal(gb_column, jNode->leftTable->tupleNum, jNode->leftOutputAttrType[0]) + 1;
+#ifdef DEBUG
             printf("matA gbMatWidth: %d\n", gbMatWidth);
-            // update
+#endif
             MATRIX_M = gbMatWidth;
         } else if (gbLeftRight == 1) {
             gb_column = jNode->rightTable->content[gb->groupByIndex[0]];
             gbMatWidth = getMaxVal(gb_column, jNode->rightTable->tupleNum, jNode->rightOutputAttrType[0]) + 1;
+#ifdef DEBUG
             printf("matB gbMatWidth: %d\n", gbMatWidth);
-            // update
+#endif
             MATRIX_N = gbMatWidth;
         } else {
             printf("No matched column found.\n");
@@ -499,7 +530,7 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
     memset(lValIndex, -1, sizeof(int) * jNode->leftOutputAttrNum);
     memset(rValIndex, -1, sizeof(int) * jNode->rightOutputAttrNum);
 
-    // get data value index from gbNode
+    // parse data value index from gbNode
     getValIndex(jNode, gb, lValIndex, rValIndex, lgbIndex, rgbIndex, dataColIndex);
 #ifdef DEBUG
     
@@ -515,37 +546,26 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
 //#ifdef DEBUG
     //cudaPrintfInit();
 //#endif
-    clock_gettime(CLOCK_REALTIME, &tcu_start);
-    clock_gettime(CLOCK_REALTIME, &init_start);
-
-    //struct timespec debug_start, debug_end; // cublasCreate has init overhead
-    struct timespec count_start, count_end;
-    //struct timespec transpose_start, transpose_end;
-
-    // read row data from tbl
+//    clock_gettime(CLOCK_REALTIME, &tcu_start);
+//    clock_gettime(CLOCK_REALTIME, &init_start);
+    struct gpu_timer initStart, end2endStart;
+    // read row data from column store
     char *gpu_fact, *gpu_dim;         // joined column index
-    char *gpu_fact_j, *gpu_dim_j;     // another index for dense table
-    char *gpu_fact_val, *gpu_dim_val; // value
     char *gpu_ldata, *gpu_rdata;      // data columns of left/right tables
     char *d_redMat;
     half *d_redMatFp16;
 
     float alpha = 1.0f;
     float beta = 0.0f;
-    half *d_fp16_A, *d_fp16_B, *d_fp16_BT;
-//    half *d_fp16_A, *d_fp16_BT;
+    half *d_fp16_A, *d_fp16_BT;
     float *c_cublas;
     half *c_fp16_cublas;
 
-//    char *gpu_fact, *gpu_dim;         // raw data idx
-//    char *gpu_fact_val, *gpu_dim_val; // raw data val
-//    float alpha = 1.0f;
-//    float beta = 0.0f;
     half alpha_fp16 = __float2half(1.0f);
     half beta_fp16 = __float2half(1.0f);
     float *c_host_cublas;
 
-    struct timespec gbCount_start, gbCount_end;
+//    struct timespec gbCount_start, gbCount_end;
 
     cublasHandle_t cublasHandle;
     cudaEvent_t startcublasEX;
@@ -553,13 +573,8 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
 
     cudaErrCheck(cudaEventCreate(&startcublasEX));
     cudaErrCheck(cudaEventCreate(&stopcublasEX));
-    //clock_gettime(CLOCK_REALTIME, &debug_start);
     cublasErrCheck(cublasCreate(&cublasHandle));
-    //clock_gettime(CLOCK_REALTIME, &debug_end);
     cublasErrCheck(cublasSetMathMode(cublasHandle, CUBLAS_TENSOR_OP_MATH));
-//    clock_gettime(CLOCK_REALTIME, &debug_start);
-    //cublasErrCheck(cublasCreate(&cublasHandle));
-//    clock_gettime(CLOCK_REALTIME, &debug_end);
     //cublasErrCheck(cublasSetMathMode(cublasHandle, CUBLAS_TENSOR_OP_MATH));
 
 
@@ -589,15 +604,13 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
     c_host_cublas = (float*)calloc(MATRIX_M*MATRIX_N, sizeof(float));
     CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&c_cublas,(uint64_t)MATRIX_M*(uint64_t)MATRIX_N*sizeof(float)));
     CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&d_fp16_A,(uint64_t)MATRIX_M*(uint64_t)MATRIX_K*sizeof(half)));
-    //TODO:d_fp16_B only be used for MICRO and OUTDEGREE
-    CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&d_fp16_B,(uint64_t)MATRIX_N*(uint64_t)MATRIX_K*sizeof(half)));
     CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&d_fp16_BT,(uint64_t)MATRIX_K*(uint64_t)MATRIX_N*sizeof(half)));
 
+    initTime = initStart.milliseconds_elapsed();
+    //clock_gettime(CLOCK_REALTIME, &init_end);
 
-    clock_gettime(CLOCK_REALTIME, &init_end);
-
-// call different matrix filling methods according to dataset
-    clock_gettime(CLOCK_REALTIME, &cuMemcpy_start);
+    //clock_gettime(CLOCK_REALTIME, &cuMemcpy_start);
+    struct gpu_timer cudaMemcpyStart;
     CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(gpu_fact,jNode->leftTable->content[jNode->leftKeyIndex], foreignKeySize,cudaMemcpyHostToDevice));
     CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(gpu_dim,jNode->rightTable->content[jNode->rightKeyIndex], primaryKeySize,cudaMemcpyHostToDevice));
     if (lValIndex[0] != -1 || lgbIndex != -1) {
@@ -612,16 +625,18 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
         printf("cudaMemcpy gpu_rdata\n");
 #endif
     }
+    cudaMemcpyTime = cudaMemcpyStart.milliseconds_elapsed();
+    //clock_gettime(CLOCK_REALTIME, &cuMemcpy_end);
 
-    clock_gettime(CLOCK_REALTIME, &cuMemcpy_end);
-
-    clock_gettime(CLOCK_REALTIME, &fill_start);  // filling time (except for MICRO, OUTDEGREE)
+//    clock_gettime(CLOCK_REALTIME, &fill_start);
     //TODO: call corresponding filling method, COUNT aggFunc later
     if (gb->gbExp[gb->aggFuncIndex].func == SUM) {
 
         if (gb->numFuncExpCol == 1) {
             if (rValIndex[0] == -1)
             {
+                //clock_gettime(CLOCK_REALTIME, &fill_start);
+                struct gpu_timer fillStart;
                 gpu_fill_data<<<(MAX_THREADS+leftTupleNum-1)/MAX_THREADS,MAX_THREADS>>> (gpu_fact,
                     gpu_ldata,    
                     MATRIX_K,
@@ -639,12 +654,16 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
                         d_fp16_BT,
                         rightTupleNum,
                         jNode->rightTable->attrType[jNode->rightKeyIndex]);
+                fillTime = fillStart.milliseconds_elapsed();
+                //clock_gettime(CLOCK_REALTIME, &fill_end); 
 
                 cudaErrCheck(cudaFree(gpu_dim));
                 cudaErrCheck(cudaFree(gpu_rdata));
 
                 printf("MxK:%dx%d\tKxN:%dx%d\n", MATRIX_M, MATRIX_K, MATRIX_K, MATRIX_N);
                 printf("Running GemmEx (Group-by aggregates) on TCUs...\n");
+                cudaErrCheck(cudaEventRecord(startcublasEX));
+                struct gpu_timer compute_start; 
                 cublasErrCheck(cublasGemmEx(cublasHandle, CUBLAS_OP_N, CUBLAS_OP_N,
                         MATRIX_N, MATRIX_M, MATRIX_K,
                         &alpha,
@@ -653,10 +672,13 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
                         &beta,
                         c_cublas, CUDA_R_32F, MATRIX_N,
                         CUBLAS_COMPUTE_32F, CUBLAS_GEMM_DEFAULT_TENSOR_OP));
+                cudaErrCheck(cudaEventRecord(stopcublasEX));
+                tcu_compute_time = compute_start.milliseconds_elapsed();
                 cudaErrCheck(cudaFree(d_fp16_A));
                 cudaErrCheck(cudaFree(d_fp16_BT));
                 
                 if (gbConstant != 1) {
+                    struct gpu_timer groupBy_start;
                     CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&d_redMat, 1 * MATRIX_M * sizeof(char)));
                     CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&d_redMatFp16, 1 * MATRIX_M * sizeof(half)));
                     CUDA_SAFE_CALL_NO_SYNC(cudaMemset(d_redMat, 1, MATRIX_M * sizeof(char)));
@@ -695,6 +717,7 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
                     groupByCount<<<(MATRIX_N+255), 256>>> (d_reduction_res, MATRIX_N, d_gbCount);
                     cudaErrCheck(cudaFree(d_reduction_res));
                     cudaErrCheck(cudaMemcpy(h_gbCount, d_gbCount, 1 * sizeof(int), cudaMemcpyDeviceToHost));
+                    tcu_groupBy_time = groupBy_start.milliseconds_elapsed();
                     cudaErrCheck(cudaFree(d_gbCount));
                     printf("GroupBy Count: %d\n", *h_gbCount);
         
@@ -702,6 +725,8 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
             } 
             else if (lValIndex[0] == -1) 
             {
+                //clock_gettime(CLOCK_REALTIME, &fill_start);
+                struct gpu_timer fillStart;
                 gpu_fill_gb<<<(MAX_THREADS+leftTupleNum-1)/MAX_THREADS,MAX_THREADS>>> (
                         gpu_fact,
                         gpu_ldata,    
@@ -719,11 +744,14 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
                         d_fp16_BT,
                         rightTupleNum,
                         jNode->rightTable->attrType[jNode->rightKeyIndex]);
+                fillTime = fillStart.milliseconds_elapsed();
+                //clock_gettime(CLOCK_REALTIME, &fill_end);
                 cudaErrCheck(cudaFree(gpu_dim));
                 cudaErrCheck(cudaFree(gpu_rdata));
 
                 printf("MxK:%dx%d\tKxN:%dx%d\n", MATRIX_M, MATRIX_K, MATRIX_K, MATRIX_N);
                 printf("Running GemmEx (Group-by aggregates) on TCUs...\n");
+                cudaErrCheck(cudaEventRecord(startcublasEX));
                 cublasErrCheck(cublasGemmEx(cublasHandle, CUBLAS_OP_N, CUBLAS_OP_N,
                         MATRIX_N, MATRIX_M, MATRIX_K,
                         &alpha,
@@ -732,6 +760,7 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
                         &beta,
                         c_cublas, CUDA_R_32F, MATRIX_N,
                         CUBLAS_COMPUTE_32F, CUBLAS_GEMM_DEFAULT_TENSOR_OP));
+                cudaErrCheck(cudaEventRecord(stopcublasEX));
                 cudaErrCheck(cudaFree(d_fp16_A));
                 cudaErrCheck(cudaFree(d_fp16_BT));
 
@@ -780,17 +809,14 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
             }
         }
         else if (gb->numFuncExpCol == 2 && gb->math_op == MULTIPLY) {
-                cudaError_t err;
+                //clock_gettime(CLOCK_REALTIME, &fill_start);
+                struct gpu_timer fillStart;
                 gpu_fill_data<<<(MAX_THREADS+leftTupleNum-1)/MAX_THREADS,MAX_THREADS>>> (gpu_fact,
                     gpu_ldata,    
                     MATRIX_K,
                     d_fp16_A,
                     leftTupleNum,
                     jNode->leftTable->attrType[jNode->leftKeyIndex]);
-                err = cudaGetLastError();
-                if (err) {
-                    printf(cudaGetErrorString(err));
-                }
 
                 cudaErrCheck(cudaFree(gpu_fact));
                 cudaErrCheck(cudaFree(gpu_ldata));
@@ -802,6 +828,8 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
                         d_fp16_BT,
                         rightTupleNum,
                         jNode->rightTable->attrType[jNode->rightKeyIndex]);
+                fillTime = fillStart.milliseconds_elapsed();
+                //clock_gettime(CLOCK_REALTIME, &fill_end);
                 cudaErrCheck(cudaFree(gpu_dim));
                 cudaErrCheck(cudaFree(gpu_rdata));
 
@@ -819,59 +847,78 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
                 cudaErrCheck(cudaEventRecord(stopcublasEX));
                 cudaErrCheck(cudaFree(d_fp16_A));
                 cudaErrCheck(cudaFree(d_fp16_BT));
-                float cublasEXTime;
-                cudaErrCheck(cudaEventSynchronize(stopcublasEX));
-                cudaErrCheck(cudaEventElapsedTime(&cublasEXTime, startcublasEX, stopcublasEX));
-                printf("cublasEX tensor cores (FP16) took %fms\n", cublasEXTime);
 
-//#ifdef DEBUG
+                //float cublasEXTime;
+                //cudaErrCheck(cudaEventSynchronize(stopcublasEX));
+                //cudaErrCheck(cudaEventElapsedTime(&cublasEXTime, startcublasEX, stopcublasEX));
+                //printf("cublasEX tensor cores (FP16) took %fms\n", cublasEXTime);
+
+#ifdef DEBUG
                 float *testRes;
                 testRes = (float*)malloc(MATRIX_M * MATRIX_N * sizeof(float));
                 cudaErrCheck(cudaMemcpy(testRes, c_cublas, MATRIX_M * MATRIX_N * sizeof(float), cudaMemcpyDeviceToHost));
 
                 print_matrix(testRes, MATRIX_M, MATRIX_N);
-//#endif
+#endif
 
 
         }
         
 
-
     } 
     else if (gb->gbExp[gb->aggFuncIndex].func == COUNT) 
     {
+        //clock_gettime(CLOCK_REALTIME, &fill_start);
         // TODO: filling method for COUNT?
+        //clock_gettime(CLOCK_REALTIME, &fill_end);
     } 
     else // simply return join_count (general MM)
     {
+        //clock_gettime(CLOCK_REALTIME, &fill_start);
 
+        //clock_gettime(CLOCK_REALTIME, &fill_end);
     }
     
-    clock_gettime(CLOCK_REALTIME, &fill_end); 
+//    clock_gettime(CLOCK_REALTIME, &fill_end); 
 
-// free those data structures
+    // free those data structures
+    end2endTime = end2endStart.milliseconds_elapsed();
+//    clock_gettime(CLOCK_REALTIME, &tcu_end);
 
-    clock_gettime(CLOCK_REALTIME, &tcu_end);
-    double tcu_fill = (fill_end.tv_sec -  fill_start.tv_sec)* BILLION + fill_end.tv_nsec - fill_start.tv_nsec;
-    //double tcu_convert = (convert_end.tv_sec -  convert_start.tv_sec)* BILLION + convert_end.tv_nsec - convert_start.tv_nsec;
-    double tcu_elapse = (tcu_end.tv_sec -  tcu_start.tv_sec)* BILLION + tcu_end.tv_nsec - tcu_start.tv_nsec;
-    double init_elapse = (init_end.tv_sec -  init_start.tv_sec)* BILLION + init_end.tv_nsec - init_start.tv_nsec;
-    double cuMemcpy_elapse = (cuMemcpy_end.tv_sec -  cuMemcpy_start.tv_sec)* BILLION + cuMemcpy_end.tv_nsec - cuMemcpy_start.tv_nsec;
-    double count_elapse = (count_end.tv_sec -  count_start.tv_sec)* BILLION + count_end.tv_nsec - count_start.tv_nsec;
-    //double debug_elapse = (debug_end.tv_sec -  debug_start.tv_sec)* BILLION + debug_end.tv_nsec - debug_start.tv_nsec;
-    //double transpose_elapse = (transpose_end.tv_sec -  transpose_start.tv_sec)* BILLION + transpose_end.tv_nsec - transpose_start.tv_nsec;
 
+    float cublasEXTime;
+    cudaErrCheck(cudaEventSynchronize(stopcublasEX));
+    cudaErrCheck(cudaEventElapsedTime(&cublasEXTime, startcublasEX, stopcublasEX));
+
+    //double init_elapse = (init_end.tv_sec -  init_start.tv_sec)* BILLION + init_end.tv_nsec - init_start.tv_nsec;
+    //double cuMemcpy_elapse = (cuMemcpy_end.tv_sec -  cuMemcpy_start.tv_sec)* BILLION + cuMemcpy_end.tv_nsec - cuMemcpy_start.tv_nsec;
+    //double tcu_fill = (fill_end.tv_sec -  fill_start.tv_sec)* BILLION + fill_end.tv_nsec - fill_start.tv_nsec;
+    //double tcu_elapse = (tcu_end.tv_sec -  tcu_start.tv_sec)* BILLION + tcu_end.tv_nsec - tcu_start.tv_nsec;
+//    double count_elapse = (count_end.tv_sec -  count_start.tv_sec)* BILLION + count_end.tv_nsec - count_start.tv_nsec;
+
+    /*
     printf("Initialization: %lf(ms)\n", init_elapse/(1000*1000));
-    printf("Matrices filling: %lf(ms)\n", tcu_fill/(1000*1000));
+    printf("gpu_timer -- init time: %fms\n\n", initTime);
     printf("cudaMemcpy: %lf(ms)\n", cuMemcpy_elapse/(1000*1000));
+    printf("gpu_timer -- cudaMemcpy time: %fms\n\n", cudaMemcpyTime);
+    printf("Matrices filling: %lf(ms)\n", tcu_fill/(1000*1000));
+    printf("gpu_timer -- fill time: %fms\n\n", fillTime);
+    printf("cublasEX tensor cores (FP16) took %fms\n", cublasEXTime);
+    printf("gpu_timer -- tcu compute time: %fms\n", tcu_compute_time);
+    printf("gpu_timer -- tcu groupBy time: %fms\n\n", tcu_groupBy_time);
     printf("MMA total time: %lf(ms)\n", tcu_elapse/(1000*1000));
+    printf("gpu_timer -- end-to-end time: %fms\n\n", end2endTime);
+    */
+    printf("Initialization:   %f ms\n"  , initTime);
+    printf("cudaMemcpy:       %f ms\n"      , cudaMemcpyTime);
+    printf("Matrices filling: %f ms\n", fillTime);
+    printf("TCU compute time: %f ms\n"  , tcu_compute_time);
+    printf("TCU groupBy time: %f ms\n"  , tcu_groupBy_time);
+    printf("End-to-end time:  %f ms\n"   , end2endTime);
 
-if (gb && (gb->gbExp[1].func == COUNT || gb->gbExp[0].func == COUNT)) {
-    //printf("cublasEX join time: %lf(ms)\n", test_elapse/(1000*1000));
-    printf("cublasEX sum counting: %lf(ms)\n", count_elapse/(1000*1000));
-}
-    //printf("cublasCreate cold start: %lf(ms)\n", debug_elapse/(1000*1000));
-    //printf("gpu transpose: %lf(ms)\n", transpose_elapse/(1000*1000));
+//if (gb && (gb->gbExp[1].func == COUNT || gb->gbExp[0].func == COUNT)) {
+//    printf("cublasEX sum counting: %lf(ms)\n", count_elapse/(1000*1000));
+//}
 
 //#ifdef DEBUG
     //cudaPrintfDisplay(stdout, true);

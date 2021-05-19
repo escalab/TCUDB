@@ -131,6 +131,7 @@ __global__ void static gpu_fill_data(char *join_column, char *data_column, int m
     int *join_value = (int*)&join_column[index];
     int *data_value = (int*)&data_column[index];
     matA[i * matWidth_k + (*join_value)] = __float2half((float)(*data_value));
+    //printf("matA[%d]: %.0f\n",i * matWidth_k + (*join_value),(float)(*data_value));
 }
 
 __global__ void static gpu_fill_gb(char *join_column, char *data_column, int matWidth_k, half *matA, size_t tupleNum, int attrType) {
@@ -162,6 +163,7 @@ __global__ void static gpu_fill_gb_transpose(char *join_column, char *data_colum
     int *join_value = (int*)&join_column[index];
     int *data_value = (int*)&data_column[index];
     matB[(*join_value) * matWidth_n + (*data_value)] = __float2half(1.0f);
+    //printf("matB[%d]: %.0f\n",(*join_value) * matWidth_n + (*data_value), 1.0f);
 }
 
 /*
@@ -278,6 +280,106 @@ __global__ void groupByCount(float *data, int n, int *gbCount) {
             atomicAdd(gbCount, 1);
         }
     }
+}
+
+__global__ void static naiveCount(float *res, int n, int *count) {
+    int idx = blockDim.x * blockIdx.x + threadIdx.x;
+    if (idx < n) {
+        if (res[idx] > 0.000001) {
+            //__syncthreads();
+            atomicAdd(count, 1);
+            //printf("res[%d]: %f\n", idx, res[idx]);
+            //printf("count: %d\n", *count);
+        }
+    }
+}
+
+__global__ void placeCount(float *out, float *in, unsigned size)
+{
+    unsigned int tid = threadIdx.x + blockDim.x * blockIdx.x;
+    if (tid >= size) return;
+    if (in[tid] > 0.00001)
+        out[tid] = 1.0f;
+    else
+        out[tid] = 0.0f;
+}
+
+__host__ uint64_t getCount(float *in, uint64_t size)
+{
+    //TODO: if the size is greater than 200000000, need to break down
+    int asumLen = 200000000;
+
+    cublasStatus_t ret;
+    cublasHandle_t cublasHandle;
+    ret = cublasCreate(&cublasHandle);
+
+    if (size < asumLen) 
+    {
+        float res;
+        ret = cublasSasum(cublasHandle, size, in, 1, &res);
+        return (uint64_t)res;
+    } 
+    else // Note: machine requires sufficient device memory ~15GB 
+    {
+        int numParts = (int)(ceil(size/(float)asumLen));
+        int remainder = size % asumLen;
+        float partialRes;
+        uint64_t pos = 0, sumRes = 0;
+        int i;
+
+        for (i = 0; i < numParts-1; i++)
+        {
+            ret = cublasSasum(cublasHandle, asumLen, in+pos, 1, &partialRes);
+            pos += asumLen;
+            sumRes += (uint64_t)partialRes;
+        } 
+        ret = cublasSasum(cublasHandle, remainder, in+pos, 1, &partialRes);
+        sumRes += (uint64_t)partialRes;
+        return sumRes;
+    }
+    
+} 
+
+__global__ void reductionCount(int *out, float *in, unsigned size) 
+{
+    __shared__ int partialSum[256];
+    unsigned int tid   = threadIdx.x;
+    unsigned int start = 2 * blockIdx.x * blockDim.x;
+
+    partialSum[tid] = 0;
+    if (tid >= size) return;
+
+    if (tid + start + blockDim.x < size) 
+    {
+        if (in[tid + start] > 0.000001) 
+        {
+            partialSum[tid]++;
+        }
+        if (in[tid + start + blockDim.x] > 0.000001) 
+        {
+            partialSum[tid]++;
+        }
+    }
+    else 
+    {
+        if (in[tid + start] > 0.000001) 
+        {
+            partialSum[tid]++;
+        }
+    }
+    
+    __syncthreads();
+    //if (partialSum[tid])
+    //    printf("tid: %d\t partialSum: %d\n", tid, partialSum[tid]);
+    for (unsigned int stride = blockDim.x/2; stride > 0; stride /= 2) {
+        __syncthreads();
+        if (tid < stride) { // reduce to left triangle
+            partialSum[tid] += partialSum[tid + stride];
+        }
+    }
+
+    if (tid == 0)
+        out[blockIdx.x] = partialSum[0];
 }
 
 /* set the first column of the matrix to be 1.0 */
@@ -409,6 +511,13 @@ __global__ void getMaxValGPU(char *column, size_t tupleNum, int attrType, int *m
     }
 }
 
+struct CSR {
+    int num_rows;
+    int *row_indices;
+    float *values;
+    int *col_indices;
+};
+
 struct gpu_timer {
     gpu_timer() {
         cudaEventCreate(&m_start);
@@ -480,6 +589,37 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
     res->tupleSize = jNode->tupleSize;
     printf("res->totalAttr: %d\n", res->totalAttr);
     printf("res->tupleSize: %d\n", res->tupleSize);
+    res->attrType = (int *) malloc(res->totalAttr * sizeof(int));
+    CHECK_POINTER(res->attrType);
+    res->attrSize = (int *) malloc(res->totalAttr * sizeof(int));
+    CHECK_POINTER(res->attrSize);
+    res->attrIndex = (int *) malloc(res->totalAttr * sizeof(int));
+    CHECK_POINTER(res->attrIndex);
+    res->attrTotalSize = (int *) malloc(res->totalAttr * sizeof(int));
+    CHECK_POINTER(res->attrTotalSize);
+    res->dataPos = (int *) malloc(res->totalAttr * sizeof(int));
+    CHECK_POINTER(res->dataPos);
+    res->dataFormat = (int *) malloc(res->totalAttr * sizeof(int));
+    CHECK_POINTER(res->dataFormat);
+    res->content = (char **) malloc(res->totalAttr * sizeof(char *));
+    CHECK_POINTER(res->content);
+
+    printf("leftOutputAttrNum: %d\n", jNode->leftOutputAttrNum);
+    for(int i=0;i<jNode->leftOutputAttrNum;i++){
+        int pos = jNode->leftPos[i];
+        res->attrType[pos] = jNode->leftOutputAttrType[i];
+        int index = jNode->leftOutputIndex[i];
+        res->attrSize[pos] = jNode->leftTable->attrSize[index];
+        res->dataFormat[pos] = UNCOMPRESSED;
+    }
+
+    for(int i=0;i<jNode->rightOutputAttrNum;i++){
+        int pos = jNode->rightPos[i];
+        res->attrType[pos] = jNode->rightOutputAttrType[i];
+        int index = jNode->rightOutputIndex[i];
+        res->attrSize[pos] = jNode->rightTable->attrSize[index];
+        res->dataFormat[pos] = UNCOMPRESSED;
+    }
 
     MATRIX_K = *matrix_dim; // user input, matrix width(#unique values)
     MATRIX_M = leftTupleNum;
@@ -629,7 +769,7 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
     //clock_gettime(CLOCK_REALTIME, &cuMemcpy_end);
 
 //    clock_gettime(CLOCK_REALTIME, &fill_start);
-    //TODO: call corresponding filling method, COUNT aggFunc later
+    //TODO: determine whether to use normal filling method or cuSPARSE filling
     if (gb->gbExp[gb->aggFuncIndex].func == SUM) {
 
         if (gb->numFuncExpCol == 1) {
@@ -676,6 +816,40 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
                 tcu_compute_time = compute_start.milliseconds_elapsed();
                 cudaErrCheck(cudaFree(d_fp16_A));
                 cudaErrCheck(cudaFree(d_fp16_BT));
+
+                // TODO: calculate join count using cusparse<t>nnz()
+//                float *test = (float*)malloc(sizeof(float) * MATRIX_M * MATRIX_N);
+
+//                int *d_jCount, *h_jCount;
+//                CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&d_jCount, (MATRIX_M*MATRIX_N+255)/256 * sizeof(int)));
+//                CUDA_SAFE_CALL_NO_SYNC(cudaMemset(d_jCount, 0, (MATRIX_M*MATRIX_N+255)/256 * sizeof(int)));
+//                h_jCount = (int*)malloc((MATRIX_M*MATRIX_N+255)/256 * sizeof(int));
+                //naiveCount<<<(MATRIX_M*MATRIX_N+255)/256, 256>>> (c_cublas, MATRIX_M*MATRIX_N, d_jCount);
+
+                
+
+                //reductionCount<<<(MATRIX_M*MATRIX_N+255)/256, 256>>> (d_jCount, c_cublas, MATRIX_M*MATRIX_N);
+                // TODO: if gbConstant != 1 then need to copy c_cublas first before placeCount<<<>>> 
+                // otherwise, the in-place replacement will affect the following groupBy operation
+                placeCount<<<(MATRIX_M*MATRIX_N+255)/256, 256>>> (c_cublas, c_cublas, MATRIX_M*MATRIX_N);
+                printf("Join Count: %lld\n", getCount(c_cublas, MATRIX_M*MATRIX_N));
+                /*
+                cudaErrCheck(cudaMemcpy(h_jCount, d_jCount, (MATRIX_M*MATRIX_N+255)/256 * sizeof(int), cudaMemcpyDeviceToHost));
+                int tmpCount = 0;
+                for (int i = 0; i <(MATRIX_M*MATRIX_N+255)/256; i++) 
+                {
+                    tmpCount += h_jCount[i];
+                    printf("i: %d\th_jCount: \n", i, h_jCount[i]);
+                }
+                printf("Join Count: %d\n", tmpCount);
+                */
+
+                //printf("Join Count: %d\n", h_jCount[0]);
+                /*
+                CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(test, c_cublas, 
+                                       MATRIX_M * MATRIX_N, 
+                                       cudaMemcpyDeviceToHost));
+                print_matrix(test, MATRIX_M, MATRIX_N);*/
                 
                 if (gbConstant != 1) {
                     struct gpu_timer groupBy_start;
@@ -709,17 +883,18 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
                     cudaErrCheck(cudaFree(temp_c));
                     cudaErrCheck(cudaFree(d_redMatFp16));
         
-                    int *d_gbCount, *h_gbCount;
+                    int *d_gbCount;
+                    int h_gbCount = 0;
                     CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&d_gbCount, 1 * sizeof(int)));
                     CUDA_SAFE_CALL_NO_SYNC(cudaMemset(d_gbCount, 0, 1 * sizeof(int)));
-                    h_gbCount = (int*)malloc(1 * sizeof(int));
                     
-                    groupByCount<<<(MATRIX_N+255), 256>>> (d_reduction_res, MATRIX_N, d_gbCount);
+                    //groupByCount<<<(MATRIX_N+255), 256>>> (d_reduction_res, MATRIX_N, d_gbCount);
+                    naiveCount<<<(MATRIX_N+255)/256, 256>>> (d_reduction_res, MATRIX_N, d_gbCount);
                     cudaErrCheck(cudaFree(d_reduction_res));
-                    cudaErrCheck(cudaMemcpy(h_gbCount, d_gbCount, 1 * sizeof(int), cudaMemcpyDeviceToHost));
+                    cudaErrCheck(cudaMemcpy(&h_gbCount, d_gbCount, 1 * sizeof(int), cudaMemcpyDeviceToHost));
                     tcu_groupBy_time = groupBy_start.milliseconds_elapsed();
                     cudaErrCheck(cudaFree(d_gbCount));
-                    printf("GroupBy Count: %d\n", *h_gbCount);
+                    printf("GroupBy Count: %d\n", h_gbCount);
         
                 }
             } 
@@ -794,16 +969,17 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
                     cudaErrCheck(cudaFree(temp_c));
                     cudaErrCheck(cudaFree(d_redMatFp16));
         
-                    int *d_gbCount, *h_gbCount;
+                    int *d_gbCount; 
+                    int h_gbCount = 0;
                     CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&d_gbCount, 1 * sizeof(int)));
                     CUDA_SAFE_CALL_NO_SYNC(cudaMemset(d_gbCount, 0, 1 * sizeof(int)));
-                    h_gbCount = (int*)malloc(1 * sizeof(int));
                     
-                    groupByCount<<<(MATRIX_M+255), 256>>> (d_reduction_res, MATRIX_M, d_gbCount);
+                    //groupByCount<<<(MATRIX_M+255), 256>>> (d_reduction_res, MATRIX_M, d_gbCount);
+                    naiveCount<<<(MATRIX_M+255)/256, 256>>> (d_reduction_res, MATRIX_M, d_gbCount);
                     cudaErrCheck(cudaFree(d_reduction_res));
-                    cudaErrCheck(cudaMemcpy(h_gbCount, d_gbCount, 1 * sizeof(int), cudaMemcpyDeviceToHost));
+                    cudaErrCheck(cudaMemcpy(&h_gbCount, d_gbCount, 1 * sizeof(int), cudaMemcpyDeviceToHost));
                     cudaErrCheck(cudaFree(d_gbCount));
-                    printf("GroupBy Count: %d\n", *h_gbCount);
+                    printf("GroupBy Count: %d\n", h_gbCount);
 
                 }
             }

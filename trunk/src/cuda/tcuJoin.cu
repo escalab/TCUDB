@@ -306,7 +306,35 @@ __global__ void placeCount(float *out, float *in, unsigned size)
 
 __host__ uint64_t getCount(float *in, uint64_t size)
 {
-    //TODO: if the size is greater than 200000000, need to break down
+    const uint64_t asumLen = 2e9;
+
+    cublasStatus_t ret;
+    cublasHandle_t cublasHandle;
+    cublasCreate(&cublasHandle);
+
+    uint64_t iter = size / asumLen;
+    uint64_t overflow = size % asumLen;
+    uint64_t offset = 0;
+    float partialRes;
+    uint64_t sumRes = 0;
+
+    for (uint64_t i = 0; i < iter; i++)
+    {
+        ret = cublasSasum(cublasHandle, asumLen, in+offset, 1, &partialRes);
+        offset += asumLen;
+        sumRes += (uint64_t) partialRes;
+    }
+
+    // handle overflow
+    if (overflow)
+    {
+        ret = cublasSasum(cublasHandle, overflow, in+offset, 1, &partialRes);
+        sumRes += (uint64_t) partialRes;
+    }
+
+    cublasDestroy(cublasHandle);
+    return sumRes;
+    /*
     int asumLen = 200000000;
 
     cublasStatus_t ret;
@@ -337,7 +365,7 @@ __host__ uint64_t getCount(float *in, uint64_t size)
         sumRes += (uint64_t)partialRes;
         return sumRes;
     }
-    
+    */
 } 
 
 __global__ void reductionCount(int *out, float *in, unsigned size) 

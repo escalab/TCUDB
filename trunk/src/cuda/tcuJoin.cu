@@ -334,38 +334,6 @@ __host__ uint64_t getCount(float *in, uint64_t size)
 
     cublasDestroy(cublasHandle);
     return sumRes;
-    /*
-    int asumLen = 200000000;
-
-    cublasStatus_t ret;
-    cublasHandle_t cublasHandle;
-    ret = cublasCreate(&cublasHandle);
-
-    if (size < asumLen) 
-    {
-        float res;
-        ret = cublasSasum(cublasHandle, size, in, 1, &res);
-        return (uint64_t)res;
-    } 
-    else // Note: machine requires sufficient device memory ~15GB 
-    {
-        int numParts = (int)(ceil(size/(float)asumLen));
-        int remainder = size % asumLen;
-        float partialRes;
-        uint64_t pos = 0, sumRes = 0;
-        int i;
-
-        for (i = 0; i < numParts-1; i++)
-        {
-            ret = cublasSasum(cublasHandle, asumLen, in+pos, 1, &partialRes);
-            pos += asumLen;
-            sumRes += (uint64_t)partialRes;
-        } 
-        ret = cublasSasum(cublasHandle, remainder, in+pos, 1, &partialRes);
-        sumRes += (uint64_t)partialRes;
-        return sumRes;
-    }
-    */
 } 
 
 __global__ void reductionCount(int *out, float *in, unsigned size) 
@@ -500,7 +468,6 @@ __host__ static int getGbLeftRight(struct joinNode *jNode, struct groupByNode *g
 }
 
 /* Mimic the max() in relational database. */
-//TODO: pass two table and return max(L, R)+1
 __host__ int getMaxVal(char *column, size_t tupleNum, int attrType) {
     int localMax = 0;
 
@@ -540,13 +507,6 @@ __global__ void getMaxValGPU(char *column, size_t tupleNum, int attrType, int *m
     }
 }
 
-struct CSR {
-    int num_rows;
-    int *row_indices;
-    float *values;
-    int *col_indices;
-};
-
 struct gpu_timer {
     gpu_timer() {
         cudaEventCreate(&m_start);
@@ -569,6 +529,103 @@ struct gpu_timer {
   protected:
     cudaEvent_t m_start, m_end;
 };
+
+/* Read tableNode and convert into Coo matrix.
+ * transpose -- 0: NON-TRANSPOSE, 1: TRANSPOSE 
+ * fillOne   -- 0: fill data value, 1: fill 1 */
+void mat2coo(int XtupleNum, char *XjoinKey, char *Xdata,
+             int *cooRowInd, int *cooColInd, float *cooValues,
+             int transpose, int fillOne)
+{
+    if (transpose)
+    {
+        for (int i = 0; i < XtupleNum; i++)
+        {
+            cooRowInd[i] = (int)XjoinKey[i*sizeof(int)];
+            cooColInd[i] = i;
+            if (fillOne) {
+                cooValues[i] = 1.0f;
+            } else {
+                cooValues[i] = (float)Xdata[i*sizeof(float)];
+            }
+        }
+    } else
+    {
+        for (int i = 0; i < XtupleNum; i++)
+        {
+            cooRowInd[i] = i;
+            cooColInd[i] = (int)XjoinKey[i*sizeof(int)];
+            if (fillOne) {
+                cooValues[i] = 1.0f;
+            } else {
+                cooValues[i] = (float)Xdata[i*sizeof(float)];
+            }
+        }
+    }
+}
+
+/* If has groupBy keyword, one matrix width will need to update.
+ * Instead of using tupleNum, using Xdata as one dimension.  */
+void mat2coo_gb(int XtupleNum, char *XjoinKey, char *Xdata,
+                int *cooRowInd, int *cooColInd, float *cooValues,
+                int transpose, int fillOne)
+{
+    if (transpose)
+    {
+        for (int i = 0; i < XtupleNum; i++)
+        {
+            cooRowInd[i] = (int)XjoinKey[i*sizeof(int)];
+            cooColInd[i] = (int)Xdata[i*sizeof(int)];
+            if (fillOne) {
+                cooValues[i] = 1.0f;
+            } else {
+                cooValues[i] = (float)Xdata[i*sizeof(float)];
+            }
+        }
+    } else
+    {
+        for (int i = 0; i < XtupleNum; i++)
+        {
+            cooRowInd[i] = (int)Xdata[i*sizeof(int)];
+            cooColInd[i] = (int)XjoinKey[i*sizeof(int)];
+            if (fillOne) {
+                cooValues[i] = 1.0f;
+            } else {
+                cooValues[i] = (float)Xdata[i*sizeof(float)];
+            }
+        }
+    }
+}
+
+/* Convert matrix format from Coo to Csr. */
+void coo2csr(int X_num_rows, int Xnnz,
+             int *X_cooRowInd, int *X_cooColInd, float *X_cooValues,
+             int *csrOffsets, int *csrColumns, float *csrValues)
+{
+    // check how elements in each row
+    int *num_elems_each_row = (int*)calloc(X_num_rows, sizeof(int));
+
+    // count num_elems
+    for (int i = 0; i < Xnnz; i++)
+    {
+        num_elems_each_row[X_cooRowInd[i]]++;
+    }
+
+    // prefix sum
+    for (int i = 0; i < X_num_rows; i++)
+    {
+        csrOffsets[i+1] = num_elems_each_row[i] + csrOffsets[i];
+    }
+
+    for (int i = 0; i < Xnnz; i++)
+    {
+        num_elems_each_row[X_cooRowInd[i]]--;
+        int r = X_cooRowInd[i];
+        int offset = csrOffsets[r] + num_elems_each_row[X_cooRowInd[i]];
+        csrColumns[offset] = X_cooColInd[i];
+        csrValues[offset] = X_cooValues[i];
+    }
+}
 
 /*
  * tcuJoinn using NVIDIA's cuBLAS lib to perform matrix multiplication and aggregation.
@@ -594,6 +651,7 @@ struct gpu_timer {
  *    contain constant variable such as alpha and number of nodes.
  * 3. To support complex customized queries, code_gen.py modification is required.
  * 4. Metadata such as sparsity and number of non-zero elements are known from user.
+ * Here, we have our assumption based on our filling methods.
  */
 struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, 
         int *matrix_dim, struct groupByNode *gb)
@@ -603,7 +661,7 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
     //struct timespec init_start, init_end;
     //struct timespec cuMemcpy_start, cuMemcpy_end;
     //struct timespec fill_start, fill_end;
-//    struct timespec count_start, count_end;
+    //struct timespec count_start, count_end;
     float initTime, cudaMemcpyTime, fillTime, end2endTime;
     float tcu_compute_time, tcu_groupBy_time;
 
@@ -611,7 +669,7 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
     int leftTupleNum  = jNode->leftTable->tupleNum;
     int rightTupleNum = jNode->rightTable->tupleNum;
     uint64_t MATRIX_M, MATRIX_N, MATRIX_K; // avoid overflow
-    uint64_t A_nnz, B_nnz;
+    uint64_t Annz, Bnnz;
 
     res = (struct tableNode*) malloc(sizeof(struct tableNode));
     CHECK_POINTER(res);
@@ -662,15 +720,17 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
                             rightTupleNum,
                             jNode->rightTable->attrType[jNode->rightKeyIndex]);
 
-    // process metadata  on host -- assume already known in DB, won't time this part
-    printf("process MATRIX_K: %d\n", max(maxLeftJoin, maxRightJoin));
+    // scan to find uniq_k -- assume already known in DB, won't time this part
+    printf("MATRIX_K: %d\n", max(maxLeftJoin, maxRightJoin)+1);
 
-    //TODO: need a kernel to get this value
-    MATRIX_K = *matrix_dim; // user input, matrix width(#unique values)
+    MATRIX_K = max(maxLeftJoin, maxRightJoin)+1; // MATRIX_K to determine sparsity
+    //MATRIX_K = *matrix_dim; // TODO: remove this later
     MATRIX_M = leftTupleNum;
     MATRIX_N = rightTupleNum;
 
-    // assume each row contains only 1 element, nnz == tupleNum
+    // assume each row contains only 1 element, Xnnz == XtupleNum
+    Annz = MATRIX_M;
+    Bnnz = MATRIX_N;
 
     long foreignKeySize = jNode->leftTable->attrTotalSize[jNode->leftKeyIndex];
     long primaryKeySize = jNode->rightTable->attrTotalSize[jNode->rightKeyIndex];
@@ -690,6 +750,8 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
         
     // update MATRIX_M or MATRIX_N given groupBy keyword
     // FIXME: pure matrix-multiplication result may be affected
+    // handle func first or dense/sparse first -> then update gbMatWidth
+    // may have to move to later section
     if (gb && gbConstant != 1) // contains groupBy keyword
     {
         char *gb_column;
@@ -789,6 +851,8 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
     CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&gpu_fact,foreignKeySize));
     CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&gpu_dim,primaryKeySize));
 
+
+    // groupBy on value other than join key
     if (gb && gbConstant != 1) 
     {
 
@@ -849,7 +913,7 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
     //TODO: determine whether to use normal filling method or cuSPARSE filling
     // assume sparsity, A_nnz, B_nnz is given (scan from host function) 
     // if sparsity > delta && A_nnz && B_nnz
-        if (gb->gbExp[gb->aggFuncIndex].func == SUM) 
+        if (gb && gb->gbExp[gb->aggFuncIndex].func == SUM) 
         {
 
             if (gb->numFuncExpCol == 1) 

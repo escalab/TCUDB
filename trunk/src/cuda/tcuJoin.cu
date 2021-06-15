@@ -112,7 +112,8 @@ __global__ void pagerank(char *columnIdx, char *columnVal, int matWidth, half *m
  *  Fill 1.0 on the index of unique value in the matrix;
  *  fill 0.0, otherwise. 
  */
-__global__ void static gpu_fill(char *column, int matWidth, half *matA, size_t tupleNum, int attrType) {
+__global__ void static gpu_fill(char *column, int matWidth, half *matA, 
+        size_t tupleNum, int attrType) {
     int i = blockDim.x * blockIdx.x + threadIdx.x;
     if (i >= tupleNum) return;
 
@@ -122,8 +123,25 @@ __global__ void static gpu_fill(char *column, int matWidth, half *matA, size_t t
     matA[i*matWidth + (*value)] = __float2half(1.0f);
 }
 
+__global__ void static gpu_fill_2data(char *join_column, char *data_column, 
+        char *data_column2, int matWidth_k, half *matA, size_t tupleNum, 
+        int attrType, int scale) {
+    int i = blockDim.x * blockIdx.x + threadIdx.x;
+    if (i >= tupleNum) return;
+
+    int index = i * attrType;
+    int *join_value = (int*)&join_column[index];// col
+    int *data_value = (int*)&data_column[index];// val
+    int *data2 = (int*)&data_column2[index];    // row
+    matA[(*data2) * matWidth_k + (*join_value)] = __float2half((float)(*data_value)/scale);
+    //printf("matA[%d]: %f\n", (*data2) * matWidth_k + (*join_value), (float)(*data_value)/scale);
+    //matA[(*data2) * matWidth_k + (*join_value)] = __float2half(65504.0f);
+    //printf("row: %d\tcol: %d\tval: %d\n", *data2, *join_value, *data_value);
+}
+
 /* Fill matrix with data value. */
-__global__ void static gpu_fill_data(char *join_column, char *data_column, int matWidth_k, half *matA, size_t tupleNum, int attrType) {
+__global__ void static gpu_fill_data(char *join_column, char *data_column, 
+        int matWidth_k, half *matA, size_t tupleNum, int attrType) {
     int i = blockDim.x * blockIdx.x + threadIdx.x;
     if (i >= tupleNum) return;
 
@@ -134,7 +152,8 @@ __global__ void static gpu_fill_data(char *join_column, char *data_column, int m
     //printf("matA[%d]: %.0f\n",i * matWidth_k + (*join_value),(float)(*data_value));
 }
 
-__global__ void static gpu_fill_gb(char *join_column, char *data_column, int matWidth_k, half *matA, size_t tupleNum, int attrType) {
+__global__ void static gpu_fill_gb(char *join_column, char *data_column, 
+        int matWidth_k, half *matA, size_t tupleNum, int attrType) {
     int i = blockDim.x * blockIdx.x + threadIdx.x;
     if (i >= tupleNum) return;
 
@@ -144,7 +163,9 @@ __global__ void static gpu_fill_gb(char *join_column, char *data_column, int mat
     matA[(*data_value) * matWidth_k + (*join_value)] = __float2half(1.0f);
 }
 
-__global__ void static gpu_fill_data_transpose(char *join_column, char *data_column, int matWidth_n, half *matB, size_t tupleNum, int attrType) {
+__global__ void static gpu_fill_data_transpose(char *join_column, 
+        char *data_column, int matWidth_n, half *matB, size_t tupleNum, 
+        int attrType) {
     int i = blockDim.x * blockIdx.x + threadIdx.x;
     if (i >= tupleNum) return;
 
@@ -155,13 +176,17 @@ __global__ void static gpu_fill_data_transpose(char *join_column, char *data_col
 }
 
 /* Fill matrix with ones according to groupBy column in transpose format. */
-__global__ void static gpu_fill_gb_transpose(char *join_column, char *data_column, int matWidth_n, half *matB, size_t tupleNum, int attrType) {
+__global__ void static gpu_fill_gb_transpose(char *join_column, 
+        char *data_column, int matWidth_n, half *matB, 
+        size_t tupleNum, int attrType) {
     int i = blockDim.x * blockIdx.x + threadIdx.x;
     if (i >= tupleNum) return;
 
     int index = i * attrType;
     int *join_value = (int*)&join_column[index];
     int *data_value = (int*)&data_column[index];
+    //if (*data_value > 1998 || *data_value < 1991)
+    //    printf("%d\n", *data_value);
     matB[(*join_value) * matWidth_n + (*data_value)] = __float2half(1.0f);
     //printf("matB[%d]: %.0f\n",(*join_value) * matWidth_n + (*data_value), 1.0f);
 }
@@ -169,7 +194,8 @@ __global__ void static gpu_fill_gb_transpose(char *join_column, char *data_colum
 /*
  * Fill ones matrix in transpose matrix format.
  */
-__global__ void static gpu_fill_transpose(char *column, int matWidth, half *matB, size_t tupleNum, int attrType) {
+__global__ void static gpu_fill_transpose(char *column, int matWidth, 
+        half *matB, size_t tupleNum, int attrType) {
     int i = blockDim.x * blockIdx.x + threadIdx.x;
     if (i >= tupleNum) return;
 
@@ -180,7 +206,8 @@ __global__ void static gpu_fill_transpose(char *column, int matWidth, half *matB
 }
 
 /* Fill matrix in dense format for matrix multiplication */
-__global__ void static microbenchmark(char *mat_i, char *mat_j, char *mat_val, int matWidth, half *mat, size_t tupleNum, int attrType) {
+__global__ void static microbenchmark(char *mat_i, char *mat_j, char *mat_val, 
+        int matWidth, half *mat, size_t tupleNum, int attrType) {
     int i = blockDim.x * blockIdx.x + threadIdx.x;
 
     if (i >= tupleNum) return;
@@ -192,7 +219,8 @@ __global__ void static microbenchmark(char *mat_i, char *mat_j, char *mat_val, i
     mat[(*row)*matWidth+(*col)] = __int2half_rn(*val);
 }
 
-__global__ void static microbenchmark_transpose(char *mat_i, char *mat_j, char *mat_val, int matWidth, half *mat, size_t tupleNum, int attrType) {
+__global__ void static microbenchmark_transpose(char *mat_i, char *mat_j, 
+        char *mat_val, int matWidth, half *mat, size_t tupleNum, int attrType) {
     int i = blockDim.x * blockIdx.x + threadIdx.x;
 
     if (i >= tupleNum) return;
@@ -204,7 +232,8 @@ __global__ void static microbenchmark_transpose(char *mat_i, char *mat_j, char *
     mat[(*col)*matWidth+(*row)] = __int2half_rn(*val);
 }
 
-__global__ void static outdegree_fill(char *column_val, half *mat, size_t tupleNum, int attrType) {
+__global__ void static outdegree_fill(char *column_val, half *mat, 
+        size_t tupleNum, int attrType) {
     int i = blockDim.x * blockIdx.x + threadIdx.x;
 
     if (i >= tupleNum) return;
@@ -238,7 +267,8 @@ __global__ void gpu_transpose(float *odata, const float *idata, int row, int col
 }
 #endif
 
-__global__ void static pageRankAdd(float *mat, int n, float pageRankAlpha, int numNodes) {
+__global__ void static pageRankAdd(float *mat, int n, float pageRankAlpha, 
+        int numNodes) {
     int idx = blockDim.x * blockIdx.x + threadIdx.x;
     if (idx < n) {
         if (mat[idx] > 1e-6)
@@ -415,31 +445,50 @@ __host__ static void print_matrix(float *mat, int rows, int cols) {
 }
 
 /* Get column index from aggregate function for later data copy. */
-__host__ static void getValIndex(struct joinNode *jNode, struct groupByNode *gb, int *lValIndex, int *rValIndex, int &lgbIndex, int &rgbIndex, int &dataColIndex) {
+__host__ static void getValIndex(struct joinNode *jNode, struct groupByNode *gb, 
+        int *lValIndex, int *rValIndex, 
+        int &lgbIndex, int &rgbIndex, 
+        //int *ldataColIndex, int &rdataColIndex) {
+        int &ldataColIndex, int &rdataColIndex,
+        int &ldata2) {
 
     for (int i = 0; i < jNode->leftOutputAttrNum; i++) {
         for (int j = 0; j < gb->numFuncExpCol; j++) {
+            // find index of aggFunc, e.g. SUM(X.column_name)
             if (jNode->leftPos[i] == gb->funcExpColIndex[j]) {
                 lValIndex[i] = jNode->leftOutputIndex[i];
 
-                if (dataColIndex == -1)
-                    dataColIndex = jNode->leftOutputIndex[i];
+                if (ldataColIndex == -1) {
+                    ldataColIndex = jNode->leftOutputIndex[i];
+                    //printf("agg left ldataColIndex[%d]: %d\n", i,ldataColIndex);
+                }
             }
             for (int k = 0; k < gb->groupByColNum; k++) {
                 if (jNode->leftPos[i] == gb->groupByIndex[k])
                     lgbIndex = 1;
             }
         }
+        // TODO: hard to know which colIdx belong to sum() as value or use as one dimension
+        if (ldata2 == -1) {
+            ldata2 = jNode->leftOutputIndex[i];
+        }
+        /*
+        if (ldataColIndex[i] == -1) {
+            ldataColIndex[i] = jNode->leftOutputIndex[i];
+            printf("left ldataColIndex[%d]: %d\n", i,ldataColIndex[i]);
+        }*/
     } 
     
     for (int i = 0; i < jNode->rightOutputAttrNum; i++) {
         for (int j = 0; j < gb->numFuncExpCol; j++) {
-            if (jNode->rightPos[i] == gb->funcExpColIndex[j]) {
-                rValIndex[i] = jNode->rightOutputIndex[i];
+            //if (jNode->rightPos[i] == gb->funcExpColIndex[j]) {
+            //    rValIndex[i] = jNode->rightOutputIndex[i];
 
-                if (dataColIndex == -1)
-                    dataColIndex = jNode->rightOutputIndex[i];
-            }
+                if (rdataColIndex == -1) {
+                    rdataColIndex = jNode->rightOutputIndex[i];
+                    //printf("right rdataColIndex: %d\n", rdataColIndex);
+                }
+            //}
 
             for (int k = 0; k < gb->groupByColNum; k++) {
                 if (jNode->rightPos[i] == gb->groupByIndex[k])
@@ -478,6 +527,18 @@ __host__ int getMaxVal(char *column, size_t tupleNum, int attrType) {
         }
     }
     return localMax;
+}
+
+__host__ int getMinVal(char *column, size_t tupleNum, int attrType) {
+    int localMin = 0;
+
+    for (int i = 0; i < tupleNum; i++) {
+        int *val = (int*)&column[i*attrType];
+        if (localMin > *val) {
+            localMin = *val;
+        }
+    }
+    return localMin;
 }
 
 /* Need to copy values to device */
@@ -675,8 +736,8 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
     CHECK_POINTER(res);
     res->totalAttr = jNode->totalAttr;
     res->tupleSize = jNode->tupleSize;
-    printf("res->totalAttr: %d\n", res->totalAttr);
-    printf("res->tupleSize: %d\n", res->tupleSize);
+//    printf("res->totalAttr: %d\n", res->totalAttr);
+//    printf("res->tupleSize: %d\n", res->tupleSize);
     res->attrType = (int *) malloc(res->totalAttr * sizeof(int));
     CHECK_POINTER(res->attrType);
     res->attrSize = (int *) malloc(res->totalAttr * sizeof(int));
@@ -692,7 +753,8 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
     res->content = (char **) malloc(res->totalAttr * sizeof(char *));
     CHECK_POINTER(res->content);
 
-    printf("leftOutputAttrNum: %d\n", jNode->leftOutputAttrNum);
+
+//    printf("leftOutputAttrNum: %d\n", jNode->leftOutputAttrNum);
     for(int i=0;i<jNode->leftOutputAttrNum;i++)
     {
         int pos = jNode->leftPos[i];
@@ -721,9 +783,28 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
                             jNode->rightTable->attrType[jNode->rightKeyIndex]);
 
     // scan to find uniq_k -- assume already known in DB, won't time this part
-    printf("MATRIX_K: %d\n", max(maxLeftJoin, maxRightJoin)+1);
+    int uniq_K = max(maxLeftJoin, maxRightJoin)+1;
+//    printf("MATRIX_K: %d\n", uniq_K);
+    /*
+    int minLeft = 0, minRight = 0;
+    minLeft = getMinVal(jNode->leftTable->content[jNode->leftKeyIndex],
+                            leftTupleNum,
+                            jNode->leftTable->attrType[jNode->leftKeyIndex]);
 
-    MATRIX_K = max(maxLeftJoin, maxRightJoin)+1; // MATRIX_K to determine sparsity
+    minRight = getMinVal(jNode->rightTable->content[jNode->rightKeyIndex],
+                            rightTupleNum,
+                            jNode->rightTable->attrType[jNode->rightKeyIndex]);
+    int shifted_K = min(minLeft, minRight);
+    if (shifted_K > 100000) // quick hack to handle Date type as int
+    {
+        
+    }
+    else
+    {
+        MATRIX_K = uniq_K; // MATRIX_K to determine sparsity
+    }
+    */
+    MATRIX_K = uniq_K; // MATRIX_K to determine sparsity
     //MATRIX_K = *matrix_dim; // TODO: remove this later
     MATRIX_M = leftTupleNum;
     MATRIX_N = rightTupleNum;
@@ -740,8 +821,16 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
     int gbMatWidth = 0;   // size of dom(gb_column.val)
 
     int *lValIndex, *rValIndex;
-    int dataColIndex = -1;
+    int ldataColIndex = -1;
+    int ldata2 = -1;
+    //int *ldataColIndex;
+    int rdataColIndex = -1;
     int lgbIndex = -1, rgbIndex = -1;
+
+    int quantizedScale = 1;  // quantization scale
+    //int quantizedScale = 7237036;
+    //ldataColIndex = (int *)malloc(sizeof(int) * jNode->leftOutputAttrNum);
+    //memset(ldataColIndex, -1, sizeof(int) * jNode->leftOutputAttrNum);
 
     if (gb && (gb->groupByColNum == 1 && gb->groupByIndex[0] == -1)) 
     {
@@ -788,7 +877,8 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
         memset(lValIndex, -1, sizeof(int) * jNode->leftOutputAttrNum);
         memset(rValIndex, -1, sizeof(int) * jNode->rightOutputAttrNum);
 
-        getValIndex(jNode, gb, lValIndex, rValIndex, lgbIndex, rgbIndex, dataColIndex);
+        getValIndex(jNode, gb, lValIndex, rValIndex, lgbIndex, rgbIndex, 
+                ldataColIndex, rdataColIndex, ldata2);
 #ifdef DEBUG
         
         printf("numFuncExpCol: %d\n", gb->numFuncExpCol);
@@ -796,11 +886,21 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
         printf("rValIndex[0]: %d\n", rValIndex[0]);
         printf("lgbIndex: %d\n", lgbIndex);
         printf("rgbIndex: %d\n", rgbIndex);
-        printf("dataColIndex: %d\n", dataColIndex);
+        printf("ldataColIndex: %d\n", ldataColIndex);
+        printf("rdataColIndex: %d\n", rdataColIndex);
         
 #endif
 
     } // end of contains groupBy keyword
+
+    //FIXME: hard code for p_brand1
+    int update_M = getMaxVal(jNode->leftTable->content[ldata2],jNode->leftTable->tupleNum, 4);
+//    printf("p_brand1 max: %d\n", update_M+1);
+    MATRIX_M = update_M+1;
+
+    quantizedScale = getMaxVal(jNode->leftTable->content[ldataColIndex],
+            jNode->leftTable->tupleNum, jNode->leftOutputAttrType[0]);
+//    printf("quantizedScale: %d\n", quantizedScale);
 
     // parse data value index from gbNode
     //if (gb) {
@@ -818,6 +918,7 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
     char *gpu_ldata, *gpu_rdata;      // data columns of left/right tables
     char *d_redMat;
     half *d_redMatFp16;
+    char *gpu_ldata2;
 
     float alpha = 1.0f;
     float beta = 0.0f;
@@ -859,6 +960,7 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
         if (lValIndex[0] != -1 || lgbIndex != -1) 
         {
             CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&gpu_ldata,foreignKeySize));
+            CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&gpu_ldata2,foreignKeySize));
 #ifdef DEBUG
             printf("cudaMalloc left_data column\n");
 #endif
@@ -890,15 +992,24 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
     {
         if (lValIndex[0] != -1 || lgbIndex != -1) 
         {
-            CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(gpu_ldata,jNode->leftTable->content[dataColIndex], foreignKeySize,cudaMemcpyHostToDevice));
+            //TODO: how to copy all OutputAttr
+            CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(gpu_ldata,jNode->leftTable->content[ldataColIndex], foreignKeySize,cudaMemcpyHostToDevice));
 #ifdef DEBUG
             printf("cudaMemcpy gpu_ldata\n");
 #endif
         }
 
+        // only for q2_1 test
+        if (ldata2 != -1) {
+            CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(gpu_ldata2,jNode->leftTable->content[ldata2], foreignKeySize,cudaMemcpyHostToDevice));
+#ifdef DEBUG
+            printf("cudaMemcpy gpu_ldata2\n");
+#endif
+        }
+
         if (rValIndex[0] != -1 || rgbIndex != -1) 
         {
-            CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(gpu_rdata,jNode->rightTable->content[dataColIndex], primaryKeySize,cudaMemcpyHostToDevice));
+            CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(gpu_rdata,jNode->rightTable->content[rdataColIndex], primaryKeySize,cudaMemcpyHostToDevice));
 #ifdef DEBUG
             printf("cudaMemcpy gpu_rdata\n");
 #endif
@@ -922,13 +1033,29 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
                 {
                     //clock_gettime(CLOCK_REALTIME, &fill_start);
                     struct gpu_timer fillStart;
-                    gpu_fill_data<<<(MAX_THREADS+leftTupleNum-1)/MAX_THREADS,MAX_THREADS>>> (gpu_fact,
+
+                    if (ldata2 != -1) {
+                        //printf("calling gpu_fill_2data\n");
+                        gpu_fill_2data<<<(MAX_THREADS+leftTupleNum-1)/MAX_THREADS,MAX_THREADS>>> (gpu_fact,
+                                gpu_ldata,
+                                gpu_ldata2,
+                                MATRIX_K,
+                                d_fp16_A,
+                                leftTupleNum,
+                                jNode->leftTable->attrType[jNode->leftKeyIndex],
+                                quantizedScale);
+                        // update MATIRX_M 
+
+                    } else {
+                        //printf("calling gpu_fill_data\n");
+                        gpu_fill_data<<<(MAX_THREADS+leftTupleNum-1)/MAX_THREADS,MAX_THREADS>>> (gpu_fact,
                         gpu_ldata,    
                         MATRIX_K,
                         d_fp16_A,
                         leftTupleNum,
                         jNode->leftTable->attrType[jNode->leftKeyIndex]);
 
+                    }
                     cudaErrCheck(cudaFree(gpu_fact));
                     cudaErrCheck(cudaFree(gpu_ldata));
                 
@@ -962,6 +1089,18 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
                     cudaErrCheck(cudaFree(d_fp16_A));
                     cudaErrCheck(cudaFree(d_fp16_BT));
 
+                    /*
+                    float *check = (float*)malloc(MATRIX_M * MATRIX_N * sizeof(float));
+                    CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(check, c_cublas, MATRIX_M * MATRIX_N * sizeof(float),cudaMemcpyDeviceToHost));
+                    for (int i = 0; i < MATRIX_M*MATRIX_N; i++) {
+                        if (check[i] != 0.0f) {
+                        //if (check[i] > 0.0000001) {
+                            //printf("%f\n", check[i]);
+                            printf("%f\n", check[i] * quantizedScale);
+                        }
+                    }*/
+
+
                 // TODO: if sparsity over threshold -- calculate join count using cusparse<t>nnz()
 //                float *test = (float*)malloc(sizeof(float) * MATRIX_M * MATRIX_N);
 
@@ -978,6 +1117,8 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
                     // otherwise, the in-place replacement will affect the following groupBy operation
                     placeCount<<<(MATRIX_M*MATRIX_N+255)/256, 256>>> (c_cublas, c_cublas, MATRIX_M*MATRIX_N);
                     printf("Join Count: %lld\n", getCount(c_cublas, MATRIX_M*MATRIX_N));
+
+
                     /*
                     cudaErrCheck(cudaMemcpy(h_jCount, d_jCount, (MATRIX_M*MATRIX_N+255)/256 * sizeof(int), cudaMemcpyDeviceToHost));
                     int tmpCount = 0;

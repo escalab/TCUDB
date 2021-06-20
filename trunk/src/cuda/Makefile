@@ -3,7 +3,7 @@ OS_SIZE = $(shell uname -m | sed -e "s/i.86/32/" -e "s/x86_64/64/")
 CUDA_HOME       ?= /usr/local/cuda
 CUDA_INC_PATH   ?= $(CUDA_HOME)/include
 CUDA_BIN_PATH   ?= $(CUDA_HOME)/bin
-CUDA_LIB		:= -lcublas_static -lculibos -lcudart_static -ldl -lcublasLt_static 
+CUDA_LIB		:= -lcusparse -lcublas_static -lcudart -lculibos -lcudart_static -ldl -lcublasLt_static 
 
 ifeq ($(OS_SIZE),32)
     CUDA_LIB_PATH  ?= $(CUDA_PATH)/lib
@@ -43,7 +43,8 @@ tcu: tableScan.cu tcuJoin.cu cuckoo.cu
 #	$(NVCC) -c -g $(GENCODE_FLAGS) -DCUBLAS_HALF -DITUNES -DRED tableScan.cu hashJoin.cu tcuJoin.cu cuckoo.cu inviJoin.cu materialize.cu groupby.cu orderBy.cu 
 #	$(NVCC) -c -g $(GENCODE_FLAGS) -DCUBLAS_HALF -DPAGERANK -DTHREAD tableScan.cu hashJoin.cu tcuJoin.cu cuckoo.cu inviJoin.cu materialize.cu groupby.cu orderBy.cu 
 #	$(NVCC) -c -g $(GENCODE_FLAGS) -DCUBLAS_HALF -DRED tableScan.cu tcuJoin.cu 
-	$(NVCC) -c -g $(GENCODE_FLAGS) -DCUBLAS_HALF -DDEBUG tableScan.cu tcuJoin.cu 
+#	$(NVCC) -c -g $(GENCODE_FLAGS) -DCUBLAS_HALF -DDEBUG tableScan.cu tcuJoin.cu 
+	$(NVCC) -c -g $(GENCODE_FLAGS) -DCUBLAS_HALF tableScan.cu tcuJoin.cu 
 #	$(NVCC) -c -g $(GENCODE_FLAGS) -DCUBLAS_HALF -DOUTDEGREE tableScan.cu hashJoin.cu tcuJoin.cu cuckoo.cu inviJoin.cu materialize.cu groupby.cu orderBy.cu 
 #	$(NVCC) -c -g $(GENCODE_FLAGS) -DCUBLAS -DMICRO tableScan.cu hashJoin.cu tcuJoin.cu cuckoo.cu inviJoin.cu materialize.cu groupby.cu orderBy.cu 
 split: msplitKernel.cu msplit.cu tableScan.cu

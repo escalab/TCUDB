@@ -527,7 +527,7 @@ def get_tables(tree, joinAttr, aggNode, orderbyNode):
                 newExp = ystree.__trace_to_leaf__(tree,exp,True)
                 colIndex = newExp.column_name
 
-        elif joinType == 2:
+        elif joinType == 2: # decides left table column index
             for exp in pkList[0]:
                 colIndex = 0
                 if isinstance(tree.left_child, ystree.TableNode):
@@ -888,7 +888,8 @@ def generate_code(tree):
             print >>fo, "extern struct tableNode* orderBy(struct orderByNode *, struct statistic *);"
             print >>fo, "extern char* materializeCol(struct materializeNode * mn, struct statistic *);"
         else: # joinType == 2
-            print >>fo, "extern struct tableNode* tcuJoin(struct joinNode *, struct statistic *, int *, struct groupByNode *);"
+            #print >>fo, "extern struct tableNode* tcuJoin(struct joinNode *, struct statistic *, int *, struct groupByNode *);"
+            print >>fo, "extern struct tableNode* tcuJoin(struct joinNode *, struct statistic *, struct groupByNode *);"
             print >>fo, "extern struct tableNode* blockJoin(struct joinNode *,struct statistic *);"
 
     else:              
@@ -945,16 +946,17 @@ def generate_code(tree):
     print >>fo, "\tint table;"
     print >>fo, "\tint long_index;"
     if joinType == 2:
-        print >>fo, "\tint matrix_dim;"
-        print >>fo, "\tint *matrix_dim_ptr = &matrix_dim;"
+        #print >>fo, "\tint matrix_dim;"
+        #print >>fo, "\tint *matrix_dim_ptr = &matrix_dim;"
         #print >>fo, "\tint gb_val;"
         #print >>fo, "\tint *gb_val_ptr = &gb_val;"
+        pass
     print >>fo, "\tchar path[PATH_MAX];"
     print >>fo, "\tint setPath = 0;"
     print >>fo, "\tstruct option long_options[] = {"
     if joinType == 2:
         print >>fo, "\t\t{\"datadir\",required_argument,0,'0'},"
-        print >>fo, "\t\t{\"matrix_dim\",required_argument,0,'1'}"
+        #print >>fo, "\t\t{\"matrix_dim\",required_argument,0,'1'}"
         #print >>fo, "\t\t{\"gb_val\",required_argument,0,'2'}"
     else:
         print >>fo, "\t\t{\"datadir\",required_argument,0,'0'}"
@@ -967,9 +969,10 @@ def generate_code(tree):
     print >>fo, "\t\t\t\tstrcpy(path,optarg);"
     print >>fo, "\t\t\t\tbreak;"
     if joinType == 2: # FIXME: for queries other than MM, user may not know dim, remove this arg later
-        print >>fo, "\t\t\tcase '1':"
-        print >>fo, "\t\t\t\t*matrix_dim_ptr = atoi(optarg);"
-        print >>fo, "\t\t\t\tbreak;"
+        pass
+        #print >>fo, "\t\t\tcase '1':"
+        #print >>fo, "\t\t\t\t*matrix_dim_ptr = atoi(optarg);"
+        #print >>fo, "\t\t\t\tbreak;"
         #print >>fo, "\t\t\tcase '2':"
         #print >>fo, "\t\t\t\t*gb_val_ptr = atoi(optarg);"
         #print >>fo, "\t\t\t\tbreak;"
@@ -977,10 +980,11 @@ def generate_code(tree):
     print >>fo, "\t}\n"
 
     if joinType == 2:
-        print >>fo, "\tif(path == NULL || *matrix_dim_ptr == 0){"
-        print >>fo, "\t\tprintf(\"Mandatory argument(s) missing, e.g. --datadir, --matrix_dim\\n\");"
-        print >>fo, "\t\texit(1);"
-        print >>fo, "\t}\n"
+        #print >>fo, "\tif(path == NULL || *matrix_dim_ptr == 0){"
+        #print >>fo, "\t\tprintf(\"Mandatory argument(s) missing, e.g. --datadir, --matrix_dim\\n\");"
+        #print >>fo, "\t\texit(1);"
+        #print >>fo, "\t}\n"
+        pass
 
     print >>fo, "\tif(path == NULL){"
     print >>fo, "\t\tprintf(\"Mandatory argument missing, e.g. --datadir\\n\");"
@@ -2592,20 +2596,21 @@ def generate_code(tree):
 
             if CODETYPE == 0: # CUDA
                 if (i > 0 and len(aggNode) > 0):
-                    print >>fo, "\t\tstruct tableNode *join" + str(len(joinAttr.dimTables)-1) + " = tcuJoin(&" + jName + ",&pp, matrix_dim_ptr, gbNode);\n"
+                    print >>fo, "\t\tstruct tableNode *join" + str(len(joinAttr.dimTables)-1) + " = tcuJoin(&" + jName + ",&pp, gbNode);\n"
+                    #print >>fo, "\t\tstruct tableNode *join" + str(len(joinAttr.dimTables)-1) + " = tcuJoin(&" + jName + ",&pp, matrix_dim_ptr, gbNode);\n"
                     #print >>fo, "\t\ttest otto"
                     #print >>fo, "\t\tstruct tableNode *join" + str(i-1) + " = tcuJoin(&" + jName + ",&pp, matrix_dim_ptr, gbNode);\n"
                 elif i > 0:
-                    print >>fo, "\t\tstruct tableNode *join" + str(i-1) + " = tcuJoin(&" + jName + ",&pp, matrix_dim_ptr, gbNode);\n"
+                    print >>fo, "\t\tstruct tableNode *join" + str(i-1) + " = tcuJoin(&" + jName + ",&pp, gbNode);\n"
                 elif (i == 0 and len(aggNode) > 0):
-                    print >>fo, "\t\tstruct tableNode *join" + str(i) + " = tcuJoin(&" + jName + ",&pp, matrix_dim_ptr, gbNode);\n"
+                    print >>fo, "\t\tstruct tableNode *join" + str(i) + " = tcuJoin(&" + jName + ",&pp, gbNode);\n"
                 else:
-                    print >>fo, "\t\tstruct tableNode *join" + str(i) + " = tcuJoin(&" + jName + ",&pp, matrix_dim_ptr, NULL);\n"
+                    print >>fo, "\t\tstruct tableNode *join" + str(i) + " = tcuJoin(&" + jName + ",&pp, NULL);\n"
             else: # OpenCL
                 if len(aggNode) > 0:
-                    print >>fo, "\t\tstruct tableNode *join" + str(i-1) + " = tcuJoin(&" + jName + ", &context, &pp, &*matrix_dim_ptr, gbNode);\n" 
+                    print >>fo, "\t\tstruct tableNode *join" + str(i-1) + " = tcuJoin(&" + jName + ", &context, &pp, gbNode);\n" 
                 else:
-                    print >>fo, "\t\tstruct tableNode *join" + str(i) + " = tcuJoin(&" + jName + ", &context, &pp, &*matrix_dim_ptr, NULL);\n" 
+                    print >>fo, "\t\tstruct tableNode *join" + str(i) + " = tcuJoin(&" + jName + ", &context, &pp, NULL);\n" 
 
             factName = "join" + str(i)
 

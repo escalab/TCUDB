@@ -56,19 +56,6 @@ void cudaErrCheck_(cudaError_t stat, const char *file, int line) {
     }
 }
 
-/*
-#define CHECK_CUDA(func)                                             \
-{                                                                    \
-    cudaError_t status = (func);                                     \
-    if (status != cudaSuccess) {                                     \
-        printf("CUDA API failed at line %d with error: %s (%d)\n",   \
-                __LINE__, cudaGetErrorString(status), status);       \
-        return EXIT_FAILURE;                                         \
-    }                                                                \
-}
-*/
-
-
 #if defined(CUBLAS) || defined(CUBLAS_HALF)
 #define cublasErrCheck(stat) { cublasErrCheck_((stat), __FILE__, __LINE__); }
 void cublasErrCheck_(cublasStatus_t stat, const char *file, int line) {
@@ -171,6 +158,19 @@ __global__ void static gpu_fill_2data(char *join_column, char *data_column,
     //printf("matA[%d]: %f\n", (*data2) * matWidth_k + (*join_value), (float)(*data_value)/scale);
     //matA[(*data2) * matWidth_k + (*join_value)] = __float2half(65504.0f);
     //printf("row: %d\tcol: %d\tval: %d\n", *data2, *join_value, *data_value);
+}
+
+__global__ void static gpu_fill_moredata(char *join_column, char *data_column, 
+        char *data_column2, int matWidth_k, half *matA, 
+        size_t tupleNum, int attrType, int scale) {
+    int i = blockDim.x * blockIdx.x + threadIdx.x;
+    if (i >= tupleNum) return;
+
+    int index = i * attrType;
+    int *join_value = (int*)&join_column[index];
+    int *data1 = (int*)&data_column[index];
+    int *data2 = (int*)&data_column2[index];
+    matA[i*matWidth_k+(*join_value)] = __float2half((float)(*data1)*(*data2)/scale);
 }
 
 /* Fill matrix with data value. */
@@ -629,7 +629,7 @@ struct gpu_timer {
 /* Read tableNode and convert into Coo matrix.
  * transpose -- 0: NON-TRANSPOSE, 1: TRANSPOSE 
  * fillOne   -- 0: fill data value, 1: fill 1 */
-void mat2coo(int XtupleNum, char *XjoinKey, char *Xdata,
+void tbl2coo(int XtupleNum, char *XjoinKey, char *Xdata,
              int *cooRowInd, int *cooColInd, float *cooValues,
              int transpose, int fillOne)
 {
@@ -671,7 +671,7 @@ void mat2coo(int XtupleNum, char *XjoinKey, char *Xdata,
 
 /* If has groupBy keyword, one matrix width will need to update.
  * Instead of using tupleNum, using Xdata as one dimension.  */
-void mat2coo_gb(int XtupleNum, char *XjoinKey, char *Xdata,
+void tbl2coo_gb(int XtupleNum, char *XjoinKey, char *Xdata,
                 int *cooRowInd, int *cooColInd, float *cooValues,
                 int transpose, int fillOne)
 {
@@ -732,6 +732,78 @@ void coo2csr(int X_num_rows, int Xnnz,
     }
 }
 
+/* Prepare CSR format from table entries. */
+void tbl2csr(int tupleNum, char *joinKey, char *Xdata,
+             int *csrOffsets, int *csrColumns, float *csrValues,
+             int fillOne)
+{
+    for (int i = 0; i < tupleNum; i++) {
+        int key = *(joinKey + i * sizeof(int));
+        csrOffsets[i+1] = i+1;
+        csrColumns[i] = key;
+
+        if (fillOne) {
+            csrValues[i] = 1.0f;
+        } else {
+            float *data = (float*)&Xdata[i * sizeof(float)];
+            csrValues[i] = *data;
+        }
+    }
+}
+
+/* Prepare CSR format in transpose from table entries. */
+void tbl2csr_transpose(int tupleNum, char *joinKey, char *Xdata,
+                       int *csrOffsets, int *csrColumns, float *csrValues,
+                       int num_rows, int fillOne)
+{
+    int *num_elems_per_row = (int*)calloc(num_rows, sizeof(int));
+
+    // count num of elements per row
+    for (int i = 0; i< tupleNum; i++) {
+        int key = *(joinKey + i * sizeof(int));
+        num_elems_per_row[key]++;
+    }
+
+    // prefixsum
+    for (int i = 0; i < num_rows; i++) {
+        csrOffsets[i+1] = num_elems_per_row[i] + csrOffsets[i];
+    }
+
+    for (int i = 0; i < tupleNum; i++) {
+        int key = *(joinKey+i*sizeof(int));
+        num_elems_per_row[key]--;
+        int offset = csrOffsets[key] + num_elems_per_row[key];
+        csrColumns[offset] = i;
+        
+        if (fillOne) {
+            csrValues[i] = 1.0f;
+        } else {
+            float *data = (float*)&Xdata[i * sizeof(float)];
+            csrValues[offset] = *data;
+        }
+    }
+}
+
+/* Prepare CSR format from table entries using GPU. */
+__global__ void gpu_tbl2csr(int tupleNum, char *joinKey, char *Xdata,
+                            int *csrOffsets, int *csrColumns, float *csrValues,
+                            int fillOne)
+{
+    int i = blockDim.x * blockIdx.x + threadIdx.x;
+    if (i >= tupleNum) return;
+    
+    int key = *(joinKey+i*sizeof(int));
+    csrOffsets[i+1] = i+1;
+    csrColumns[i] = key;
+
+    if (fillOne) {
+        csrValues[i] = 1.0f;
+    } else {
+        float *data = (float*)&Xdata[i * sizeof(float)];
+        csrValues[i] = *data;
+    }
+}
+
 void materialize()
 {
 
@@ -764,7 +836,8 @@ void materialize()
  * Here, we have our assumption based on our filling methods.
  */
 struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, 
-        int *matrix_dim, struct groupByNode *gb)
+        struct groupByNode *gb)
+        //int *matrix_dim, struct groupByNode *gb)
 {
 
     //struct timespec tcu_start, tcu_end;
@@ -836,6 +909,7 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
 
     // scan to find uniq_k -- assume already known in DB, won't time this part
     int uniq_K = max(maxLeftJoin, maxRightJoin)+1;
+    printf("M: %d N: %d\n", leftTupleNum, rightTupleNum);
     printf("MATRIX_K: %d\n", uniq_K);
     /*
     int minLeft = 0, minRight = 0;
@@ -957,7 +1031,7 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
 
     } // end of contains groupBy keyword
 
-    //FIXME: hard code for p_brand1 -- breakdown3
+    //FIXME: hard code for q2_1 p_brand1 -- breakdown3
 /*    
     int update_M = getMaxVal(jNode->leftTable->content[ldata2],jNode->leftTable->tupleNum, 4);
 //    printf("p_brand1 max: %d\n", update_M+1);
@@ -1015,7 +1089,6 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
     //long foreignKeySize = jNode->leftTable->attrTotalSize[jNode->leftKeyIndex];
     //long primaryKeySize = jNode->rightTable->attrTotalSize[jNode->rightKeyIndex];
 
-    //printf("gpu_fact size: %d\tgpu_dim size: %d\n", foreignKeySize, primaryKeySize);
     CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&gpu_fact,foreignKeySize));
     CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&gpu_dim,primaryKeySize));
 
@@ -1041,14 +1114,20 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
         }
     }
 
-
+    //FIXME: if use cusparse, this three lines doesn't require
+    /*
     c_host_cublas = (float*)calloc(MATRIX_M*MATRIX_N, sizeof(float));
     CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&c_cublas,(uint64_t)MATRIX_M*(uint64_t)MATRIX_N*sizeof(float)));
     CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&d_fp16_A,(uint64_t)MATRIX_M*(uint64_t)MATRIX_K*sizeof(half)));
     CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&d_fp16_BT,(uint64_t)MATRIX_K*(uint64_t)MATRIX_N*sizeof(half)));
+    */
 
     initTime = initStart.milliseconds_elapsed();
     //clock_gettime(CLOCK_REALTIME, &init_end);
+
+    //FIXME: SSB q1-series sql
+    //quantizedScale = getMaxVal(jNode->leftTable->content[0],
+    //        jNode->leftTable->tupleNum, jNode->leftOutputAttrType[0]);
     
     //clock_gettime(CLOCK_REALTIME, &cuMemcpy_start);
     struct gpu_timer cudaMemcpyStart;
@@ -1154,7 +1233,7 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
                             &beta,
                             c_cublas, CUDA_R_32F, MATRIX_N,
                             CUBLAS_COMPUTE_32F, CUBLAS_GEMM_DEFAULT_TENSOR_OP));
-                    cudaErrCheck(cudaEventRecord(stopcublasEX));
+                    cudaErrCheck(cudaEventRecord(stopcublasEX)); 
                     tcu_compute_time = compute_start.milliseconds_elapsed();
                     cudaErrCheck(cudaFree(d_fp16_A));
                     cudaErrCheck(cudaFree(d_fp16_BT));
@@ -1353,9 +1432,225 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
                     }
                 } // end of lValIndex[0] == -1
             } // end of gb->numFuncExpCol == 1
-            else if (gb->numFuncExpCol == 2 && gb->math_op == MULTIPLY) 
+            else if (!jNode->rightOutputAttrNum && gb->numFuncExpCol == 2 && gb->math_op == MULTIPLY)
+            {
+                printf("SSB q1-series sql\n");
+                /*
+                struct gpu_timer fillStart;
+                CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&gpu_ldata,foreignKeySize));
+                CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&gpu_ldata2,foreignKeySize));
+                CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(gpu_ldata,jNode->leftTable->content[0], foreignKeySize,cudaMemcpyHostToDevice));
+                CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(gpu_ldata2,jNode->leftTable->content[1], foreignKeySize,cudaMemcpyHostToDevice));
+                
+                 // c_cublas will be out of memory
+                gpu_fill_moredata<<<(MAX_THREADS+leftTupleNum-1)/MAX_THREADS,MAX_THREADS>>> (gpu_fact,
+                    gpu_ldata,    
+                    gpu_ldata2,
+                    MATRIX_K,
+                    d_fp16_A,
+                    leftTupleNum,
+                    jNode->leftTable->attrType[jNode->leftKeyIndex],
+                    quantizedScale);
+
+                gpu_fill_transpose<<<(MAX_THREADS+rightTupleNum-1)/MAX_THREADS,MAX_THREADS>>> (
+                    gpu_dim,
+                    MATRIX_N,
+                    d_fp16_BT,
+                    rightTupleNum,
+                    jNode->rightTable->attrType[jNode->rightKeyIndex]);
+                fillTime = fillStart.milliseconds_elapsed();
+                
+                printf("MxK:%dx%d\tKxN:%dx%d\n", MATRIX_M, MATRIX_K, MATRIX_K, MATRIX_N);
+                printf("Running GemmEx (SSB q1_1b1.sql) on TCUs...\n");
+                    struct gpu_timer compute_start; 
+                cudaErrCheck(cudaEventRecord(startcublasEX));
+                cublasErrCheck(cublasGemmEx(cublasHandle, CUBLAS_OP_N, CUBLAS_OP_N,
+                    MATRIX_N, MATRIX_M, MATRIX_K,
+                    &alpha,
+                    d_fp16_BT, CUDA_R_16F, MATRIX_N,
+                    d_fp16_A, CUDA_R_16F, MATRIX_K,
+                    &beta,
+                    c_cublas, CUDA_R_32F, MATRIX_N,
+                    CUBLAS_COMPUTE_32F, CUBLAS_GEMM_DEFAULT_TENSOR_OP));
+                cudaErrCheck(cudaEventRecord(stopcublasEX));
+                    tcu_compute_time = compute_start.milliseconds_elapsed();
+                cudaErrCheck(cudaFree(d_fp16_A));
+                cudaErrCheck(cudaFree(d_fp16_BT));
+                */
+
+            ///*  
+            clock_gettime(CLOCK_REALTIME, &fill_start);
+            hA_cooRowInd = (int *)calloc(Annz, sizeof(int));
+            hA_cooColInd = (int *)calloc(Annz, sizeof(int));
+            hA_cooValues = (float *)calloc(Annz, sizeof(float));
+
+            hB_cooRowInd  = (int *)calloc(Bnnz, sizeof(int));
+            hB_cooColInd  = (int *)calloc(Bnnz, sizeof(int));
+            hB_cooValues  = (float *)calloc(Bnnz, sizeof(float));
+
+            tbl2coo(leftTupleNum, 
+                    jNode->leftTable->content[jNode->leftKeyIndex],
+                    jNode->leftTable->content[0],
+                    hA_cooRowInd, hA_cooColInd, hA_cooValues,
+                    0, 0);
+
+            tbl2coo(rightTupleNum, 
+                    jNode->rightTable->content[jNode->rightKeyIndex],
+                    jNode->rightTable->content[0], // temp test
+                    hB_cooRowInd, hB_cooColInd, hB_cooValues,
+                    1, 0);
+
+            hA_csrOffsets = (int*)calloc((A_num_rows + 1), sizeof(int));
+            hA_csrColumns = (int*)calloc(Annz, sizeof(int));
+            hA_csrValues  = (float*)calloc(Annz, sizeof(float));
+
+            coo2csr(A_num_rows, Annz,
+                    hA_cooRowInd, hA_cooColInd, hA_cooValues,
+                    hA_csrOffsets, hA_csrColumns, hA_csrValues);
+
+            hB_csrOffsets = (int*)calloc((B_num_rows + 1), sizeof(int));
+            hB_csrColumns = (int*)calloc(Bnnz, sizeof(int));
+            hB_csrValues  = (float*)calloc(Bnnz, sizeof(float));
+
+            coo2csr(B_num_rows, Bnnz,
+                    hB_cooRowInd, hB_cooColInd, hB_cooValues,
+                    hB_csrOffsets, hB_csrColumns, hB_csrValues);
+
+            printf("Annz: %d A#rows: %d A#cols: %d\n", Annz, A_num_rows, A_num_cols);
+            printf("Bnnz: %d B#rows: %d B#cols: %d\n", Bnnz, B_num_rows, B_num_cols);
+
+            cusparseOperation_t opA = CUSPARSE_OPERATION_NON_TRANSPOSE;
+            cusparseOperation_t opB = CUSPARSE_OPERATION_NON_TRANSPOSE;
+            cudaDataType computeType = CUDA_R_32F;
+
+            cudaEvent_t startcusparse;
+            cudaEvent_t stopcusparse;
+            cudaErrCheck( cudaEventCreate(&startcusparse) );
+            cudaErrCheck( cudaEventCreate(&stopcusparse) );
+            // Device memory management: Allocate and copy A, B
+            int *dA_rows, *dA_columns;
+            int *dB_rows, *dB_columns;
+            int *dC_rows, *dC_columns;
+            float *dA_values, *dB_values, *dC_values;
+            int *dA_csrOffsets, *dA_csrColumns, *dB_csrOffsets, *dB_csrColumns;
+            float *dA_csrValues, *dB_csrValues;
+            int *dC_csrOffsets, *dC_csrColumns;
+
+            // allocate A
+            cudaErrCheck( cudaMalloc((void**) &dA_csrOffsets,
+                        (A_num_rows + 1) * sizeof(int)) );
+            cudaErrCheck( cudaMalloc((void**) &dA_csrColumns, Annz * sizeof(int))   );
+            cudaErrCheck( cudaMalloc((void**) &dA_csrValues,  Annz * sizeof(float)) );
+            // allocate B
+            cudaErrCheck( cudaMalloc((void**) &dB_csrOffsets,
+                        (B_num_rows + 1) * sizeof(int)) );
+            cudaErrCheck( cudaMalloc((void**) &dB_csrColumns, Bnnz * sizeof(int))   );
+            cudaErrCheck( cudaMalloc((void**) &dB_csrValues,  Bnnz * sizeof(float)) );
+
+            // allocate C
+            cudaErrCheck(cudaMalloc((void**) &dC_csrOffsets, 
+                        (A_num_rows + 1) * sizeof(int)));
+
+            // copy A
+            cudaErrCheck( cudaMemcpy(dA_csrOffsets, hA_csrOffsets,
+                        (A_num_rows + 1) * sizeof(int),
+                        cudaMemcpyHostToDevice) );
+            cudaErrCheck( cudaMemcpy(dA_csrColumns, hA_csrColumns, Annz * sizeof(int),
+                        cudaMemcpyHostToDevice) );
+            cudaErrCheck( cudaMemcpy(dA_csrValues, hA_csrValues,
+                        Annz * sizeof(float), cudaMemcpyHostToDevice) );
+
+            // copy B
+            cudaErrCheck( cudaMemcpy(dB_csrOffsets, hB_csrOffsets,
+                        (B_num_rows + 1) * sizeof(int),
+                        cudaMemcpyHostToDevice) );
+            cudaErrCheck( cudaMemcpy(dB_csrColumns, hB_csrColumns, Bnnz * sizeof(int),
+                        cudaMemcpyHostToDevice) );
+            cudaErrCheck( cudaMemcpy(dB_csrValues, hB_csrValues,
+                        Bnnz * sizeof(float), cudaMemcpyHostToDevice) );
+
+            clock_gettime(CLOCK_REALTIME, &fill_end);
+
+            // call CUSPARSE APIs
+            clock_gettime(CLOCK_REALTIME, &cusp_start);
+
+            cusparseHandle_t     handle = NULL;
+            cusparseSpMatDescr_t matA, matB, matC;
+            void*  dBuffer1    = NULL, *dBuffer2   = NULL;
+            size_t bufferSize1 = 0,    bufferSize2 = 0;
+            cusparseErrCheck( cusparseCreate(&handle) );
+
+            cusparseErrCheck( cusparseCreateCsr(&matA, A_num_rows, A_num_cols, Annz,
+                        dA_csrOffsets, dA_csrColumns, dA_csrValues,
+                        CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I,
+                        CUSPARSE_INDEX_BASE_ZERO, CUDA_R_32F) );
+
+            cusparseErrCheck( cusparseCreateCsr(&matB, B_num_rows, B_num_cols, Bnnz,
+                        dB_csrOffsets, dB_csrColumns, dB_csrValues,
+                        CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I,
+                        CUSPARSE_INDEX_BASE_ZERO, CUDA_R_32F) );
+
+            cusparseErrCheck( cusparseCreateCsr(&matC, A_num_rows, B_num_cols, 0,
+                        NULL, NULL, NULL,
+                        CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I,
+                        CUSPARSE_INDEX_BASE_ZERO, CUDA_R_32F) );
+
+            clock_gettime(CLOCK_REALTIME, &cusp_end);
+
+            cudaErrCheck( cudaEventRecord(startcusparse, 0) );
+            // SpGEMM Computation
+            cusparseSpGEMMDescr_t spgemmDesc;
+            cusparseErrCheck( cusparseSpGEMM_createDescr(&spgemmDesc) );
+            cusparseErrCheck(
+                    cusparseSpGEMM_workEstimation(handle, opA, opB,
+                        &alpha, matA, matB, &beta, matC,
+                        computeType, CUSPARSE_SPGEMM_DEFAULT,
+                        spgemmDesc, &bufferSize1, NULL) );
+            cudaErrCheck( cudaMalloc((void**) &dBuffer1, bufferSize1) );
+
+            cusparseErrCheck(
+                        cusparseSpGEMM_workEstimation(handle, opA, opB,
+                            &alpha, matA, matB, &beta, matC,
+                            computeType, CUSPARSE_SPGEMM_DEFAULT,
+                            spgemmDesc, &bufferSize1, dBuffer1) );
+
+            cusparseErrCheck(
+                    cusparseSpGEMM_compute(handle, opA, opB,
+                        &alpha, matA, matB, &beta, matC,
+                        computeType, CUSPARSE_SPGEMM_DEFAULT,
+                        spgemmDesc, &bufferSize2, NULL) );
+            cudaErrCheck( cudaMalloc((void**) &dBuffer2, bufferSize2) );
+
+            cusparseErrCheck( cusparseSpGEMM_compute(handle, opA, opB,
+                        &alpha, matA, matB, &beta, matC,
+                        computeType, CUSPARSE_SPGEMM_DEFAULT,
+                        spgemmDesc, &bufferSize2, dBuffer2) );
+
+            cudaErrCheck( cudaEventRecord(stopcusparse, 0) );
+            int64_t C_num_rows1, C_num_cols1, C_nnz1;
+            cusparseErrCheck(
+                    cusparseSpMatGetSize(matC, &C_num_rows1, &C_num_cols1,
+                        &C_nnz1));
+            cudaErrCheck(cudaMalloc((void**) &dC_csrColumns, C_nnz1 * sizeof(int)));
+            cudaErrCheck(cudaMalloc((void**) &dC_values,  C_nnz1 * sizeof(float)));
+            cusparseErrCheck(cusparseCsrSetPointers(matC, dC_csrOffsets, dC_csrColumns, dC_values));
+            cusparseErrCheck(cusparseSpGEMM_copy(handle, opA, opB,
+                        &alpha, matA, matB, &beta, matC,
+                        computeType, CUSPARSE_SPGEMM_DEFAULT, spgemmDesc));
+
+                    
+            float cusparseSpGEMM_time;
+            cudaErrCheck(cudaEventElapsedTime(&cusparseSpGEMM_time, startcusparse,
+                        stopcusparse));
+            printf("cusparseSpGEMM took %f ms\n", cusparseSpGEMM_time);
+            //*/
+
+
+            } 
+            else if (gb->numFuncExpCol == 2 && gb->math_op == MULTIPLY) // can't differentiate sec3-q4 and ssb q1_1b1.sql 
             {
                 //clock_gettime(CLOCK_REALTIME, &fill_start);
+                //printf("sec3-q4\n");
                 struct gpu_timer fillStart;
                 gpu_fill_data<<<(MAX_THREADS+leftTupleNum-1)/MAX_THREADS,MAX_THREADS>>> (gpu_fact,
                     gpu_ldata,    
@@ -1417,7 +1712,7 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
         } 
         else // simply return join_count (general MM)
         {
-            // TEST breakdown1 using cuSPARSE -- mat2coo
+            // TEST breakdown1 using cuSPARSE -- tbl2coo
             clock_gettime(CLOCK_REALTIME, &fill_start);
             hA_cooRowInd = (int *)calloc(Annz, sizeof(int));
             hA_cooColInd = (int *)calloc(Annz, sizeof(int));
@@ -1433,13 +1728,13 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
                 printf("%d\n",*data_value);
             }*/
 
-            mat2coo(leftTupleNum, 
+            tbl2coo(leftTupleNum, 
                     jNode->leftTable->content[jNode->leftKeyIndex],
                     NULL,
                     hA_cooRowInd, hA_cooColInd, hA_cooValues,
                     0, 1);
 
-            mat2coo(rightTupleNum, 
+            tbl2coo(rightTupleNum, 
                     jNode->rightTable->content[jNode->rightKeyIndex],
                     NULL,
                     hB_cooRowInd, hB_cooColInd, hB_cooValues,
@@ -1482,8 +1777,6 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
             //clock_gettime(CLOCK_REALTIME, &fill_end);
             printf("Annz: %d A#rows: %d A#cols: %d\n", Annz, A_num_rows, A_num_cols);
             printf("Bnnz: %d B#rows: %d B#cols: %d\n", Bnnz, B_num_rows, B_num_cols);
-            //printf("\n", );
-            //printf("\n", );
 
             cusparseOperation_t opA = CUSPARSE_OPERATION_NON_TRANSPOSE;
             cusparseOperation_t opB = CUSPARSE_OPERATION_NON_TRANSPOSE;
@@ -1664,9 +1957,11 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
 
 
     float cublasEXTime;
-    //FIXME: temp comment out
-//    cudaErrCheck(cudaEventSynchronize(stopcublasEX));
-//    cudaErrCheck(cudaEventElapsedTime(&cublasEXTime, startcublasEX, stopcublasEX));
+    //FIXME: temp comment out if using cusparse
+    /*
+    cudaErrCheck(cudaEventSynchronize(stopcublasEX));
+    cudaErrCheck(cudaEventElapsedTime(&cublasEXTime, startcublasEX, stopcublasEX));
+    */
 
     //double init_elapse = (init_end.tv_sec -  init_start.tv_sec)* BILLION + init_end.tv_nsec - init_start.tv_nsec;
     //double cuMemcpy_elapse = (cuMemcpy_end.tv_sec -  cuMemcpy_start.tv_sec)* BILLION + cuMemcpy_end.tv_nsec - cuMemcpy_start.tv_nsec;
@@ -1693,7 +1988,7 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
     printf("Initialization:   %f ms\n"  , initTime);
     printf("cudaMemcpy:       %f ms\n"      , cudaMemcpyTime);
     printf("Matrices filling: %f ms\n", fillTime);
-//    printf("TCU compute time: %f ms\n"  , tcu_compute_time);
+    printf("TCU compute time: %f ms\n"  , tcu_compute_time);
     if (gb) {
         printf("TCU groupBy time: %f ms\n"  , tcu_groupBy_time);
     }

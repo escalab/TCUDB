@@ -752,6 +752,53 @@ void tbl2csr(int tupleNum, char *joinKey, char *Xdata,
     }
 }
 
+/* Calculate number of elements per row. */
+__global__ void row_count(int nnz, int *num_elems_per_row,
+        char *joinKey) {
+    int i = blockDim.x * blockIdx.x + threadIdx.x;
+    if (i >= nnz) return;
+    int *key = (int*)&joinKey[i * sizeof(int)];
+    atomicAdd_system(&num_elems_per_row[*key], 1);
+}
+
+/* Prefixsum for csrRowOffsets. */
+__global__ void prefixsum(int num_rows,
+        int *num_elems_per_row, int *d_csrOffsets)
+{
+    unsigned int d_hist_idx = blockDim.x * blockIdx.x + threadIdx.x;
+    if (d_hist_idx >= num_rows) return;
+    unsigned int cdf_val = 0;
+    for (int i = 0; i <= d_hist_idx; ++i) {
+        cdf_val = cdf_val + num_elems_per_row[i];
+    }
+    d_csrOffsets[d_hist_idx] = cdf_val;
+}
+
+__global__ void gpu_tbl2csr_transpose(int tupleNum,
+        char *joinKey, char *Xdata,
+        int *num_elems_per_row,
+        int *csrOffsets, int *csrColumns, float *csrValues,
+        int fillOne)
+{
+    //int i = blockDim.x * blockIdx.x + threadIdx.x;
+    //if (i >= tupleNum) return;
+
+    for (int i = 0; i < tupleNum; i++) {
+        int *key = (int*)&joinKey[i * sizeof(int)];
+        //TODO:these two lines require atomic operations
+        num_elems_per_row[*key]--;
+        int offset = csrOffsets[*key] + num_elems_per_row[*key];
+
+        csrColumns[offset] = i;
+        if (fillOne) {
+            csrValues[i] = 1.0f;
+        } else {
+            float *data = (float*)&Xdata[i * sizeof(float)];
+            csrValues[offset] = *data;
+        }
+    }
+}
+
 /* Prepare CSR format in transpose from table entries. */
 void tbl2csr_transpose(int tupleNum, char *joinKey, char *Xdata,
                        int *csrOffsets, int *csrColumns, float *csrValues,
@@ -795,9 +842,11 @@ __global__ void gpu_tbl2csr(int tupleNum, char *joinKey, char *Xdata,
     int i = blockDim.x * blockIdx.x + threadIdx.x;
     if (i >= tupleNum) return;
     
-    int key = *(joinKey+i*sizeof(int));
+    //int key = *(joinKey+i*sizeof(int));
+    int *key = (int*)&joinKey[i*sizeof(int)];
     csrOffsets[i+1] = i+1;
-    csrColumns[i] = key;
+    csrColumns[i] = *key;
+    
 
     if (fillOne) {
         csrValues[i] = 1.0f;
@@ -846,6 +895,7 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
     //struct timespec init_start, init_end;
     //struct timespec cuMemcpy_start, cuMemcpy_end;
     struct timespec fill_start, fill_end;
+    struct timespec spMemcpy_start, spMemcpy_end;
     struct timespec cusp_start, cusp_end;
     struct timespec gemm_start, gemm_end;
     float initTime, cudaMemcpyTime, fillTime, end2endTime;
@@ -1403,18 +1453,23 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
 #ifdef CUSPARSE
             printf("SSB q1-series sql using cuSPARSE\n");
             clock_gettime(CLOCK_REALTIME, &fill_start);
+            /*
             hA_csrOffsets = (int*)calloc((A_num_rows + 1), sizeof(int));
             hA_csrColumns = (int*)calloc(Annz, sizeof(int));
             hA_csrValues  = (float*)calloc(Annz, sizeof(float));
+            */
 
             hB_csrOffsets = (int*)calloc((B_num_rows + 1), sizeof(int));
             hB_csrColumns = (int*)calloc(Bnnz, sizeof(int));
             hB_csrValues  = (float*)calloc(Bnnz, sizeof(float));
 
+
+            /*
             tbl2csr(leftTupleNum,jNode->leftTable->content[jNode->leftKeyIndex],
                     jNode->leftTable->content[0],
                     hA_csrOffsets, hA_csrColumns, hA_csrValues,
                     0);
+            */
 
             tbl2csr_transpose(rightTupleNum, 
                     jNode->rightTable->content[jNode->rightKeyIndex],
@@ -1458,6 +1513,12 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
                         (A_num_rows + 1) * sizeof(int)));
 
             // copy A
+            clock_gettime(CLOCK_REALTIME, &spMemcpy_start);    
+            ///*
+            CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&gpu_ldata,foreignKeySize));
+            CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(gpu_ldata,jNode->leftTable->content[0], foreignKeySize,cudaMemcpyHostToDevice));
+            //*/
+            /*
             cudaErrCheck( cudaMemcpy(dA_csrOffsets, hA_csrOffsets,
                         (A_num_rows + 1) * sizeof(int),
                         cudaMemcpyHostToDevice) );
@@ -1465,6 +1526,7 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
                         cudaMemcpyHostToDevice) );
             cudaErrCheck( cudaMemcpy(dA_csrValues, hA_csrValues,
                         Annz * sizeof(float), cudaMemcpyHostToDevice) );
+            */
 
             // copy B
             cudaErrCheck( cudaMemcpy(dB_csrOffsets, hB_csrOffsets,
@@ -1475,16 +1537,30 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
             cudaErrCheck( cudaMemcpy(dB_csrValues, hB_csrValues,
                         Bnnz * sizeof(float), cudaMemcpyHostToDevice) );
 
+            clock_gettime(CLOCK_REALTIME, &spMemcpy_end);    
+            ///*
+            //cudaError_t status;
+            
+            gpu_tbl2csr<<<(1024+leftTupleNum-1)/1024, 1024>>> (leftTupleNum,
+                    gpu_fact, gpu_ldata,
+                    //gpu_fact, NULL,
+                    dA_csrOffsets, dA_csrColumns, dA_csrValues, 0);
+
+            //*/
             clock_gettime(CLOCK_REALTIME, &fill_end);
+            cudaErrCheck(cudaFree(gpu_fact));
+            //cudaErrCheck(cudaFree(gpu_ldata));
 
             // call CUSPARSE APIs
+            cusparseHandle_t     handle = NULL;
+            cusparseErrCheck( cusparseCreate(&handle) );
             clock_gettime(CLOCK_REALTIME, &cusp_start);
 
-            cusparseHandle_t     handle = NULL;
+//            cusparseHandle_t     handle = NULL;
             cusparseSpMatDescr_t matA, matB, matC;
             void*  dBuffer1    = NULL, *dBuffer2   = NULL;
             size_t bufferSize1 = 0,    bufferSize2 = 0;
-            cusparseErrCheck( cusparseCreate(&handle) );
+//            cusparseErrCheck( cusparseCreate(&handle) );
 
             cusparseErrCheck( cusparseCreateCsr(&matA, A_num_rows, A_num_cols, Annz,
                         dA_csrOffsets, dA_csrColumns, dA_csrValues,
@@ -1918,9 +1994,12 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
     printf("cudaMemcpy:       %f ms\n", cudaMemcpyTime);
 #ifdef CUSPARSE
     double data_preparation = (fill_end.tv_sec-fill_start.tv_sec)*BILLION+fill_end.tv_nsec-fill_start.tv_nsec;
+    double spMemcpy = (spMemcpy_end.tv_sec-spMemcpy_start.tv_sec)*BILLION+spMemcpy_end.tv_nsec-spMemcpy_start.tv_nsec;
     double cusp_preparation = (cusp_end.tv_sec-cusp_start.tv_sec)*BILLION+cusp_end.tv_nsec-cusp_start.tv_nsec;
 
     printf("Data preparation time: %lf ms (include cudaMemcpy CSR)\n", data_preparation/(1000*1000));
+    printf("cusp memcpy time: %lf ms (only cudaMemcpy CSR)\n", spMemcpy/(1000*1000));
+    //spMemcpy_start
     printf("cusp init time: %lf ms\n", cusp_preparation/(1000*1000));
 #else
     printf("Matrices filling: %f ms\n", fillTime);

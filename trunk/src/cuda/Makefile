@@ -17,8 +17,10 @@ GENCODE_SM80    := -gencode arch=compute_80,code=sm_80
 GENCODE_FLAGS   := $(GENCODE_SM80)
 
 INCLUDES   := -I../include
-CFLAGS	:= -g -O3
-NVCCFLAGS	:= -pg -O3
+CFLAGS	:= -O3
+NVCCFLAGS	:= -O3
+#CFLAGS	:= -g -O3
+#NVCCFLAGS	:= -pg -O3
 
 ifeq ($(OS_SIZE),32)
     LDFLAGS   := -lcudart -lrt
@@ -39,8 +41,9 @@ gpu: tableScan.cu hashJoin.cu cuckoo.cu inviJoin.cu materialize.cu groupby.cu or
 	$(NVCC) -c -g $(GENCODE_FLAGS) tableScan.cu hashJoin.cu cuckoo.cu inviJoin.cu materialize.cu groupby.cu orderBy.cu 
 
 tcu: tableScan.cu tcuJoin.cu cuckoo.cu
-	$(NVCC) -c -g $(GENCODE_FLAGS) -DCUBLAS_HALF -DDEBUG -DCUSPARSE tableScan.cu tcuJoin.cu 
+#	$(NVCC) -c -g $(GENCODE_FLAGS) -DCUBLAS_HALF -DDEBUG -DCUSPARSE tableScan.cu tcuJoin.cu 
 #	$(NVCC) -c -g $(GENCODE_FLAGS) -DCUBLAS_HALF -DDEBUG tableScan.cu tcuJoin.cu 
+	$(NVCC) -c -g $(GENCODE_FLAGS) -DCUBLAS_HALF tableScan.cu tcuJoin.cu 
 split: msplitKernel.cu msplit.cu tableScan.cu
 	$(NVCC) -c -g $(GENCODE_FLAGS) msplitKernel.cu msplit.cu tableScan.cu
 	

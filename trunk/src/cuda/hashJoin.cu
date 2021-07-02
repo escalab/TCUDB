@@ -951,12 +951,17 @@ struct tableNode * hashJoin(struct joinNode *jNode, struct statistic *pp){
     //printf("gpuFactFilter: %d\n", filterSize);
 
     //printf("newFactFilter: %d\n", newSize);
-    //CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void **)&newFactFilter,newSize));
-    //CUDA_SAFE_CALL_NO_SYNC(cudaMemset(newFactFilter,0,newSize));
+#ifdef MODIFIED
+    CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void **)&newFactFilter,newSize));
+    CUDA_SAFE_CALL_NO_SYNC(cudaMemset(newFactFilter,0,newSize));
+#endif
 
     if(format == UNCOMPRESSED) {
-//        count_join_result2<<<grid,block>>>(gpu_hashNum, gpu_psum, gpu_bucket, gpu_fact, jNode->leftTable->tupleNum, gpu_count,gpuFactFilter,newFactFilter,hsize, right_tupleNum);
+#ifdef MODIFIED
+        count_join_result2<<<grid,block>>>(gpu_hashNum, gpu_psum, gpu_bucket, gpu_fact, jNode->leftTable->tupleNum, gpu_count,gpuFactFilter,newFactFilter,hsize, right_tupleNum);
+#else
         count_join_result<<<grid,block>>>(gpu_hashNum, gpu_psum, gpu_bucket, gpu_fact, jNode->leftTable->tupleNum, gpu_count,gpuFactFilter,hsize);
+#endif
     }
     else if(format == DICT){
         int dNum;
@@ -1054,7 +1059,7 @@ struct tableNode * hashJoin(struct joinNode *jNode, struct statistic *pp){
 
         // judge whether fact or dim table and set the corresponding attrSize/attrType
         if(leftRight == 0){ // left (fact) table
-            index = jNode->leftOutputIndex[pos]; 
+            index = jNode->leftOutputIndex[pos]; // determine which column 
             dataPos = jNode->leftTable->dataPos[index];
             format = jNode->leftTable->dataFormat[index];
 
@@ -1095,13 +1100,17 @@ struct tableNode * hashJoin(struct joinNode *jNode, struct statistic *pp){
                 }
 
                 //if(attrSize == sizeof(int))
-                if(attrType == INT)
+                if(attrType == INT){
+//#ifdef MODIFIED
 //                    joinFact_int2<<<grid,block>>>(gpu_resPsum,gpu_fact, attrSize, jNode->leftTable->tupleNum,newFactFilter,gpu_result, right_tupleNum);
+//#else
                     joinFact_int<<<grid,block>>>(gpu_resPsum,gpu_fact, attrSize, jNode->leftTable->tupleNum,gpuFactFilter,gpu_result);
-                else
+//#endif
+                }
+                else {
 //                    joinFact_other2<<<grid,block>>>(gpu_resPsum,gpu_fact, attrSize, jNode->leftTable->tupleNum,newFactFilter,gpu_result, right_tupleNum);
                     joinFact_other<<<grid,block>>>(gpu_resPsum,gpu_fact, attrSize, jNode->leftTable->tupleNum,gpuFactFilter,gpu_result);
-
+                }
             }else if (format == DICT){
                 struct dictHeader * dheader = NULL;
                 int byteNum;
@@ -1162,12 +1171,17 @@ struct tableNode * hashJoin(struct joinNode *jNode, struct statistic *pp){
                     gpu_fact = table;
                 }
 
-                if(attrType == sizeof(int))
+                if(attrType == sizeof(int)) {
+//#ifdef MODIFIED
 //                    joinDim_int2<<<grid,block>>>(gpu_resPsum,gpu_fact, attrSize, jNode->leftTable->tupleNum, newFactFilter,gpu_result,jNode->rightTable->tupleNum);
+//#else
                     joinDim_int<<<grid,block>>>(gpu_resPsum,gpu_fact, attrSize, jNode->leftTable->tupleNum, gpuFactFilter,gpu_result);
-                else
+//#endif
+                }
+                else {
 //                    joinDim_other2<<<grid,block>>>(gpu_resPsum,gpu_fact, attrSize, jNode->leftTable->tupleNum, newFactFilter,gpu_result, right_tupleNum);
                     joinDim_other<<<grid,block>>>(gpu_resPsum,gpu_fact, attrSize, jNode->leftTable->tupleNum, gpuFactFilter,gpu_result);
+                }
 
             }else if (format == DICT){
                 struct dictHeader * dheader = NULL;
@@ -1204,6 +1218,7 @@ struct tableNode * hashJoin(struct joinNode *jNode, struct statistic *pp){
             }
         }
         
+        // seems to only store non-zero tuples for those chosen columns 
         res->attrTotalSize[i] = resSize;
         res->dataFormat[i] = UNCOMPRESSED;
         if(res->dataPos[i] == MEM){

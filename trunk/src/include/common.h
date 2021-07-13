@@ -227,6 +227,8 @@ struct groupByNode{
     //int * rColIndex;            /* right column index in FuncExp */
     int math_op;                /* check MULTIPLY or PLUS, may need to extend to list */
     int aggFuncIndex;           /* the index of SUM function expression */
+    int *gbLeftColIndex;         /* Fact table column index mapping */
+    int *gbRightColIndex;         /* Dim table column index mapping */
 };
 
 struct sortRecord{

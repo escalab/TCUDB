@@ -996,7 +996,9 @@ class TwoJoinNode(QueryPlanTreeBase):
 
                 for exp in exp_list:
                     if exp.column_name == old_exp.column_name:
+                        #print >> sys.stdout,"before adjust "+exp.column_name
                         x.column_name = exp_list.index(exp)
+                        #print >> sys.stdout,"adjusted "+str(x.column_name)
                         break
 
         if self.where_condition is not None:
@@ -2108,7 +2110,9 @@ class FirstStepGroupBy:
 
                 a_token = {}
                 a_token["name"] = eachitem.tokenname
+                #print >> sys.stdout,"groupBy tokenname "+eachitem.tokenname
                 a_token["content"] = eachitem.content
+                #print >> sys.stdout,"groupBy content "+eachitem.content
                 
                 a_group_by_item.append(a_token)
 
@@ -3696,7 +3700,11 @@ def gen_column_index(tree):
                     for tmp in exp_list:
                         if isinstance(tmp,YRawColExp):
                             if exp.table_name == tmp.table_name and exp.column_name == tmp.column_name:
+                                #print >> sys.stdout,"groupBy column_name "+exp.column_name
+                                # create index for gb_exp_list
+                                # doesn't relate to left/right table column index
                                 exp.column_name = exp_list.index(tmp)
+                                #print >> sys.stdout,"index "+str(exp.column_name)
                                 break
                         else:
                             if exp.column_name == select_dict[tmp]:
@@ -3727,7 +3735,9 @@ def gen_column_index(tree):
                 for tmp in exp_list:
                     if isinstance(tmp,YRawColExp):
                         if exp.table_name == tmp.table_name and exp.column_name == tmp.column_name:
+                            #print >> sys.stdout,"select list column_name "+exp.column_name
                             exp.column_name = exp_list.index(tmp)
+                            #print >> sys.stdout,"index "+str(exp.column_name)
                             break
                     else:
                         if exp.column_name == select_dict[tmp]:
@@ -3741,7 +3751,9 @@ def gen_column_index(tree):
                     for x in exp_list:
                         if isinstance(x,YRawColExp):
                             if x.table_name == tmp.table_name and x.column_name == tmp.column_name:
+                                #print >> sys.stdout,"select list YFunc column_name "+x.column_name
                                 tmp.column_name = exp_list.index(x)
+                                #print >> sys.stdout,"index "+str(tmp.column_name)
                                 break
 
                         else:

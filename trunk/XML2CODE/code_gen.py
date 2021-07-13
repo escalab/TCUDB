@@ -770,8 +770,10 @@ generate_col_list gets all the columns that will be scannned for a given table n
 
 def generate_col_list(tn,indexList, colList):
 
+    # README: this is where to know column index from table
     for col in tn.select_list.tmp_exp_list:
         if col.column_name not in indexList:
+            #print >> sys.stdout,col.evaluate()
             indexList.append(col.column_name)
             colList.append(col)
 
@@ -812,6 +814,8 @@ def generate_code(tree):
     First check whether the value of each configurable variable is valid.
     All should be integers.
     """
+    gbLeftColIndex = []
+    gbRightColIndex = []
 
     if CODETYPE not in [0,1]:
         print "Error! The value of CODETYPE can only be 0 or 1."
@@ -1040,11 +1044,13 @@ def generate_code(tree):
 
         selectList = tn.select_list.tmp_exp_list
 
-        # read column binary
+        # read only required column binary 
         for i in range(0,totalAttr):
             col = colList[i]
             ctype = to_ctype(col.column_type)
             colIndex = int(col.column_name)
+            #print >> sys.stdout,"dimTable colIndex "+str(colIndex)
+            gbRightColIndex.append(colIndex)
             colLen = type_length(tn.table_name, colIndex, col.column_type)
             tupleSize += " + " + colLen
 
@@ -2131,12 +2137,15 @@ def generate_code(tree):
         colList = []
         generate_col_list(joinAttr.factTables[0],indexList,colList)
         totalAttr = len(indexList)
+        #print >> sys.stdout,"factTable totalAttr "+str(totalAttr) #seems like it's join node
 
         for i in range(0,totalAttr):
             col = colList[i] 
             if isinstance(col, ystree.YRawColExp):
                 colType = col.column_type
                 colIndex = col.column_name
+                #print >> sys.stdout,"factTable colIndex "+str(colIndex)
+                gbLeftColIndex.append(colIndex)
                 ctype = to_ctype(colType)
                 colLen = type_length(joinAttr.factTables[0].table_name, colIndex, colType)
             elif isinstance(col, ystree.YConsExp):
@@ -2189,6 +2198,7 @@ def generate_code(tree):
             if isinstance(col, ystree.YRawColExp):
                 colType = col.column_type
                 colIndex = col.column_name
+                #print >> sys.stdout,"fact select colIndex "+str(colIndex)
                 ctype = to_ctype(colType)
                 colLen = type_length(joinAttr.factTables[0].table_name, colIndex, colType)
             elif isinstance(col, ystree.YConsExp):
@@ -2443,8 +2453,10 @@ def generate_code(tree):
             rOutLen = len(rOutList)
           #  print >>fo, "\t\t" + "printf(lOut:" + str(lOutLen)+ " rOut:" + str(rOutLen) + ");"
 
-            # pass gbNode info to tcuJoin node
+            # TODO: pass gbNode info to tcuJoin node, colIndex 
             if joinType == 2:
+                #print >> sys.stdout,"joinAttr.dimTables len "+str(len(joinAttr.dimTables))
+                #print >> sys.stdout,"aggNode len "+str(len(aggNode))
                 if (i == len(joinAttr.dimTables)-1 and len(aggNode) > 0):
                     gb_exp_list = aggNode[0].group_by_clause.groupby_exp_list
                     #print >>fo, "\t\tprintf("+ str(gb_exp_list) +");"
@@ -2453,6 +2465,8 @@ def generate_code(tree):
                     select_list = aggNode[0].select_list.tmp_exp_list
                     selectLen = len(select_list)
                     gbLen = len(gb_exp_list)
+                    gbLeftColLen = len(gbLeftColIndex)
+                    gbRightColLen= len(gbRightColIndex)
                     #print >>fo, "\t\tprintf("+ str(len(select_list)) +");"
                     # whether has groupBy keyword, if there is aggFunc, gbLen=1
                     #print >>fo, "\t\tprintf("+ str(gbLen) +");"
@@ -2462,11 +2476,23 @@ def generate_code(tree):
                     print >>fo, "\t\tgbNode->groupByColNum = " + str(gbLen) + ";"
                     print >>fo, "\t\tgbNode->groupByIndex = (int *)malloc(sizeof(int) * " + str(gbLen) + ");"
                     print >>fo, "\t\tCHECK_POINTER(gbNode->groupByIndex);"
+                    print >>fo, "\t\tgbNode->gbLeftColIndex = (int *)malloc(sizeof(int) * " + str(gbLeftColLen) + ");"
+                    print >>fo, "\t\tCHECK_POINTER(gbNode->gbLeftColIndex);"
+                    print >>fo, "\t\tgbNode->gbRightColIndex = (int *)malloc(sizeof(int) * " + str(gbRightColLen) + ");"
+                    print >>fo, "\t\tCHECK_POINTER(gbNode->gbRightColIndex);"
                     #print >>fo, "\tgbNode->groupByType = (int *)malloc(sizeof(int) * " + str(gbLen) + ");"
                     #print >>fo, "\tCHECK_POINTER(gbNode->groupByType);"
                     #print >>fo, "\tgbNode->groupBySize = (int *)malloc(sizeof(int) * " + str(gbLen) + ");"
                     #print >>fo, "\tCHECK_POINTER(gbNode->groupBySize);"
-            
+                    for j in range(0, gbLeftColLen):
+                        idx = gbLeftColIndex[j]
+                        print >>fo, "\t\tgbNode->gbLeftColIndex["+str(j)+"] = " + str(idx) + ";"
+
+                    for j in range(0, gbRightColLen):
+                        idx = gbRightColIndex[j]
+                        print >>fo, "\t\tgbNode->gbRightColIndex["+str(j)+"] = " + str(idx) + ";"
+
+
                     # bool to judge which index for gbExp[i] to parse
                     hasGroupBy = False
                     # first determine whether there is group-by keyword
@@ -2474,6 +2500,7 @@ def generate_code(tree):
                         exp = gb_exp_list[i]
                         if isinstance(exp, ystree.YRawColExp):
                             hasGroupBy = True
+                            # parse different gbIndex than I think
                             print >>fo, "\t\tgbNode->groupByIndex[" + str(i) + "] = " + str(exp.column_name) + ";"
                           #  print >>fo, "\t\tprintf("+"gb YRawColExp"+");"
                             #print >>fo, "\tgbNode->groupByType[" + str(i) + "] = gbNode->table->attrType[" + str(exp.column_name) + "];" 
@@ -2855,7 +2882,9 @@ def generate_code(tree):
     print >>fo, "\tclock_gettime(CLOCK_REALTIME,&end);"
     print >>fo, "\tdouble timeE = (end.tv_sec -  start.tv_sec)* BILLION + end.tv_nsec - start.tv_nsec;"
     print >>fo, "\tprintf(\"Disk Load Time: %lf\\n\", diskTotal/(1000*1000));"
-    print >>fo, "\tprintf(\"Total Time: %lf\\n\", timeE/(1000*1000));"
+    if joinType == 0:  
+        print >>fo, "\tprintf(\"Total Time: %lf\\n\", timeE/(1000*1000));"
+        
     print >>fo, "}\n"
     fo.close()
 

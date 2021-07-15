@@ -38,6 +38,7 @@ import pickle
 
 schema = None
 keepInGpu = 1 
+selectListDict = {}
 
 """
 Get the value of the configurable variables from config.py
@@ -449,9 +450,18 @@ def get_tables(tree, joinAttr, aggNode, orderbyNode):
 
         newNode = copy.deepcopy(tree)
         joinAttr.joinNode.insert(0,newNode)
-
+        orig_selectlst_idx = 0
         for exp in tree.select_list.tmp_exp_list:
+            # FIXME: re-mapping select_lst idx with tbl_idx
+            # if LEFT/RIGHT, selectListDict
+            temp_exp = exp.evaluate()
+            tbl_idx = temp_exp[temp_exp.find(".")+1:]
+            selectListDict[orig_selectlst_idx] = tbl_idx
+            #print >> sys.stdout, "tbl idx "+exp.evaluate()+" orig select_lst idx "+ str(orig_selectlst_idx)
+            #print >> sys.stdout, "selectListDict["+str(orig_selectlst_idx)+"] = "+str(selectListDict[orig_selectlst_idx])
+            orig_selectlst_idx += 1
 
+            #this index may re-organize the sequence
             index = tree.select_list.tmp_exp_list.index(exp)
             if isinstance(exp,ystree.YRawColExp):
                 colAttr = columnAttr()
@@ -515,6 +525,7 @@ def get_tables(tree, joinAttr, aggNode, orderbyNode):
                     colIndex = -1
                     for tmp in tree.left_child.select_list.tmp_exp_list:
                         if exp.column_name == tmp.column_name:
+                            #print >> sys.stdout,"left join "+tmp.evaluate()
                             colIndex = tree.left_child.select_list.tmp_exp_list.index(tmp)
                             break
                     if colIndex == -1:
@@ -534,13 +545,14 @@ def get_tables(tree, joinAttr, aggNode, orderbyNode):
                     colIndex = -1
                     for tmp in tree.left_child.select_list.tmp_exp_list:
                         if exp.column_name == tmp.column_name:
+                            #print >> sys.stdout,"left join "+tmp.evaluate()
                             colIndex = tree.left_child.select_list.tmp_exp_list.index(tmp)
                             break
                     if colIndex == -1:
                         print 1/0
                 else:
                     colIndex = exp.column_name
-
+        #print >> sys.stdout,"factIndex insert "+str(colIndex)
         joinAttr.factIndex.insert(0, colIndex)
 
         for exp in pkList[1]:
@@ -549,15 +561,18 @@ def get_tables(tree, joinAttr, aggNode, orderbyNode):
                 colIndex = -1
                 for tmp in tree.right_child.select_list.tmp_exp_list:
                     if exp.column_name == tmp.column_name:
+                        #print >> sys.stdout,"right join "+tmp.evaluate()
                         colIndex = tree.right_child.select_list.tmp_exp_list.index(tmp)
                         break
                 if colIndex == -1:
                     print 1/0
             else:
                 colIndex = exp.column_name
+            #print >> sys.stdout,"dimIndex insert "+str(colIndex)
             joinAttr.dimIndex.insert(0, colIndex)
 
         if isinstance(tree.right_child, ystree.TableNode):
+            #print >> sys.stdout,"dimIndex insert2 "+str(colIndex)
             joinAttr.dimTables.insert(0, tree.right_child)
 
         get_tables(tree.left_child, joinAttr, aggNode, orderbyNode)
@@ -787,6 +802,29 @@ def generate_col_list(tn,indexList, colList):
                 indexList.append(col.column_name)
                 colList.append(col)
 
+def generate_col_list2(tn,indexList, colList, tableList):
+
+    # README: this is where to know column index from table
+    for col in tn.select_list.tmp_exp_list:
+        if col.column_name not in indexList:
+            #print >> sys.stdout,col.evaluate()
+            temp = col.evaluate()
+            temp_tbl = temp[:temp.find(".")]
+            if temp_tbl not in tableList:
+                tableList.append(temp_tbl)
+                #print >> sys.stdout,temp_tbl
+            indexList.append(col.column_name)
+            colList.append(col)
+
+    if tn.where_condition is not None:
+        whereList = []
+        relList = []
+        conList = []
+        get_where_attr(tn.where_condition.where_condition_exp,whereList,relList,conList)
+        for col in whereList:
+            if col.column_name not in indexList:
+                indexList.append(col.column_name)
+                colList.append(col)
 """
 generate_code generates CUDA/OpenCL codes from the query plan tree.
 Currently we only generate CUDA/OpenCL codes for star schema queries.
@@ -814,8 +852,16 @@ def generate_code(tree):
     First check whether the value of each configurable variable is valid.
     All should be integers.
     """
-    gbLeftColIndex = []
-    gbRightColIndex = []
+    gbLeftColIndex = []  # leftTable colIndex
+    gbRightColIndex = [] # rightTable colIndex
+    factDict = {}
+    dimDict = {}
+    leftTableList = []   # memorize leftTable name
+    rightTableList = []  # memorize rightTable name
+    leftAggList = []     # leftTable colIndex in Agg func
+    rightAggList = []     # rightTable colIndex in Agg func
+    #selectListDict = {}
+    #TODO: remaining index in select list should be projection
 
     if CODETYPE not in [0,1]:
         print "Error! The value of CODETYPE can only be 0 or 1."
@@ -972,7 +1018,7 @@ def generate_code(tree):
     print >>fo, "\t\t\t\tsetPath = 1;"
     print >>fo, "\t\t\t\tstrcpy(path,optarg);"
     print >>fo, "\t\t\t\tbreak;"
-    if joinType == 2: # FIXME: for queries other than MM, user may not know dim, remove this arg later
+    if joinType == 2:
         pass
         #print >>fo, "\t\t\tcase '1':"
         #print >>fo, "\t\t\t\t*matrix_dim_ptr = atoi(optarg);"
@@ -1036,8 +1082,12 @@ def generate_code(tree):
 
         indexList = []
         colList = []
-        generate_col_list(tn,indexList,colList)
-
+        if joinType == 2:
+            generate_col_list2(tn,indexList,colList,rightTableList)
+        else:
+             generate_col_list(tn,indexList,colList)
+        
+        #print >> sys.stdout,"rightTableList "+rightTableList[0]
         totalAttr = len(indexList)
         setTupleNum = 0
         tupleSize = "0"
@@ -1088,16 +1138,20 @@ def generate_code(tree):
         print >>fo, "\t\t" + tnName+"->content = (char **) malloc(sizeof(char *)*"+str(totalAttr)+");"
         print >>fo, "\t\tCHECK_POINTER(" + tnName + "->content);"
 
+        # handle gb colIndex in rightTable
+        #dimDict = {}
         for i in range(0,totalAttr):
             col = colList[i]
             ctype = to_ctype(col.column_type)
             colIndex = int(col.column_name)
+            dimDict[colIndex] = i
             colLen = type_length(tn.table_name, colIndex, col.column_type)
             tupleSize += " + " + colLen
 
             print >>fo, "\t\t" + tnName+"->attrSize["+str(i) + "] = "+ colLen + ";"
             print >>fo, "\t\t" + tnName+"->attrIndex["+str(i) + "] = "+ str(colIndex) + ";"
             print >>fo, "\t\t" + tnName+"->attrType[" + str(i) + "] = " + ctype + ";"
+            #print >> sys.stdout,"dim raw colIndex "+str(colIndex)+" i "+str(i)
 
             if POS == 0:
                 print >>fo, "\t\t" + tnName+"->dataPos[" + str(i) + "] = MEM;"
@@ -2135,8 +2189,11 @@ def generate_code(tree):
 
         indexList = []
         colList = []
-        generate_col_list(joinAttr.factTables[0],indexList,colList)
+        #leftTableList = []
+        generate_col_list2(joinAttr.factTables[0],indexList,colList,leftTableList)
+        #print >> sys.stdout,"leftTableList "+leftTableList[0]
         totalAttr = len(indexList)
+        
         #print >> sys.stdout,"factTable totalAttr "+str(totalAttr) #seems like it's join node
 
         for i in range(0,totalAttr):
@@ -2198,7 +2255,8 @@ def generate_code(tree):
             if isinstance(col, ystree.YRawColExp):
                 colType = col.column_type
                 colIndex = col.column_name
-                #print >> sys.stdout,"fact select colIndex "+str(colIndex)
+                factDict[colIndex] = i
+                #print >> sys.stdout,"fact select raw colIndex "+str(colIndex)+" i "+str(i)
                 ctype = to_ctype(colType)
                 colLen = type_length(joinAttr.factTables[0].table_name, colIndex, colType)
             elif isinstance(col, ystree.YConsExp):
@@ -2465,6 +2523,8 @@ def generate_code(tree):
                     select_list = aggNode[0].select_list.tmp_exp_list
                     selectLen = len(select_list)
                     gbLen = len(gb_exp_list)
+                    aggParaList = []
+
                     gbLeftColLen = len(gbLeftColIndex)
                     gbRightColLen= len(gbRightColIndex)
                     #print >>fo, "\t\tprintf("+ str(len(select_list)) +");"
@@ -2485,11 +2545,11 @@ def generate_code(tree):
                     #print >>fo, "\tgbNode->groupBySize = (int *)malloc(sizeof(int) * " + str(gbLen) + ");"
                     #print >>fo, "\tCHECK_POINTER(gbNode->groupBySize);"
                     for j in range(0, gbLeftColLen):
-                        idx = gbLeftColIndex[j]
+                        idx = factDict[gbLeftColIndex[j]]
                         print >>fo, "\t\tgbNode->gbLeftColIndex["+str(j)+"] = " + str(idx) + ";"
 
                     for j in range(0, gbRightColLen):
-                        idx = gbRightColIndex[j]
+                        idx = dimDict[gbRightColIndex[j]]
                         print >>fo, "\t\tgbNode->gbRightColIndex["+str(j)+"] = " + str(idx) + ";"
 
 
@@ -2527,7 +2587,39 @@ def generate_code(tree):
                     for i in range(0,selectLen):
                         exp = select_list[i]
                         if isinstance(exp, ystree.YFuncExp):
-            
+                            #remap select_list-reordered idx to map tbl_idx
+                            #print >> sys.stdout,"selectLen "+str(selectLen)
+                            #print >> sys.stdout,"Agg func index (orig select_lst idx)"+exp.evaluate() 
+                            temp = exp.evaluate()
+                            temp = temp[temp.find("(")+1:temp.find(")")]
+                            temp_lst = temp.split(",")
+
+                            for x in range(len(temp_lst)):
+                                tbl = temp_lst[x][:temp_lst[x].find(".")]
+                                idx = temp_lst[x][temp_lst[x].find(".")+1:]
+                                if tbl in leftTableList:
+                                    leftAggList.append(selectListDict[int(idx)])
+                                elif tbl in rightTableList:
+                                    rightAggList.append(selectListDict[int(idx)])
+                            lAggLen = len(leftAggList)
+                            rAggLen = len(rightAggList)
+                            if (lAggLen > 0):
+                                #print >> sys.stdout, "leftAggList "+str(leftAggList[0])
+                                #lAggLen = len(leftAggList)
+                                print >>fo, "\t\tgbNode->leftAggNum = " + str(lAggLen) + ";"
+                                print >>fo, "\t\tgbNode->leftAggColIndex = (int *) malloc(sizeof(int) *" + str(lAggLen) + ");"
+                                print >>fo, "\t\tCHECK_POINTER(leftAggColIndex);"
+                                for j in range(0, lAggLen):
+                                    print >>fo, "\t\tgbNode->leftAggColIndex[" + str(j) + "] = " + str(leftAggList[j]) + ";"
+    
+                            if (rAggLen > 0):
+                                #print >> sys.stdout, "rightAggList "+str(rightAggList[0])
+                                print >>fo, "\t\tgbNode->rightAggNum = " + str(lAggLen) + ";"
+                                print >>fo, "\t\tgbNode->rightAggColIndex = (int *) malloc(sizeof(int) *" + str(rAggLen) + ");"
+                                print >>fo, "\t\tCHECK_POINTER(rightAggColIndex);"
+                                for j in range(0, rAggLen):
+                                    print >>fo, "\t\tgbNode->rightAggColIndex[" + str(j) + "] = " + str(rightAggList[j]) + ";"
+
                             print >>fo, "\t\tgbNode->tupleSize += sizeof(float);"
                             print >>fo, "\t\tgbNode->attrType[" + str(i) + "] = FLOAT;"
                             print >>fo, "\t\tgbNode->attrSize[" + str(i) + "] = sizeof(float);"
@@ -2580,6 +2672,10 @@ def generate_code(tree):
             
                         elif isinstance(exp, ystree.YRawColExp):
                             colIndex = exp.column_name
+
+                            #print >> sys.stdout,"YRawColExp i "+str(i)
+                            #print >> sys.stdout,"Agg RawCol index (orig select_list idx)"+exp.evaluate() 
+
                             #print >>fo, "\t\tgbNode->attrType[" + str(i) + "] = " + resultNode + "->attrType[" + str(colIndex) + "];"
                             #print >>fo, "\t\tgbNode->attrSize[" + str(i) + "] = " + resultNode + "->attrSize[" + str(colIndex) + "];"
                             #print >>fo, "\t\tgbNode->tupleSize += "+resultNode + "->attrSize[" + str(colIndex) + "];"

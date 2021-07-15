@@ -996,9 +996,7 @@ class TwoJoinNode(QueryPlanTreeBase):
 
                 for exp in exp_list:
                     if exp.column_name == old_exp.column_name:
-                        #print >> sys.stdout,"before adjust "+exp.column_name
                         x.column_name = exp_list.index(exp)
-                        #print >> sys.stdout,"adjusted "+str(x.column_name)
                         break
 
         if self.where_condition is not None:
@@ -3735,7 +3733,7 @@ def gen_column_index(tree):
                 for tmp in exp_list:
                     if isinstance(tmp,YRawColExp):
                         if exp.table_name == tmp.table_name and exp.column_name == tmp.column_name:
-                            #print >> sys.stdout,"select list column_name "+exp.column_name
+                            #print >> sys.stdout,"select list rawCol column_name "+exp.column_name
                             exp.column_name = exp_list.index(tmp)
                             #print >> sys.stdout,"index "+str(exp.column_name)
                             break

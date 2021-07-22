@@ -3698,11 +3698,11 @@ def gen_column_index(tree):
                     for tmp in exp_list:
                         if isinstance(tmp,YRawColExp):
                             if exp.table_name == tmp.table_name and exp.column_name == tmp.column_name:
-                                #print >> sys.stdout,"groupBy column_name "+exp.column_name
+                               # print >> sys.stdout,"groupBy column_name "+exp.column_name
                                 # create index for gb_exp_list
                                 # doesn't relate to left/right table column index
                                 exp.column_name = exp_list.index(tmp)
-                                #print >> sys.stdout,"index "+str(exp.column_name)
+                               # print >> sys.stdout,"index "+str(exp.column_name)
                                 break
                         else:
                             if exp.column_name == select_dict[tmp]:

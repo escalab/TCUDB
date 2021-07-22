@@ -452,7 +452,7 @@ def get_tables(tree, joinAttr, aggNode, orderbyNode):
         joinAttr.joinNode.insert(0,newNode)
         orig_selectlst_idx = 0
         for exp in tree.select_list.tmp_exp_list:
-            # FIXME: re-mapping select_lst idx with tbl_idx
+            # re-mapping select_lst idx with tbl_idx
             # if LEFT/RIGHT, selectListDict
             temp_exp = exp.evaluate()
             tbl_idx = temp_exp[temp_exp.find(".")+1:]
@@ -1100,7 +1100,8 @@ def generate_code(tree):
             ctype = to_ctype(col.column_type)
             colIndex = int(col.column_name)
             #print >> sys.stdout,"dimTable colIndex "+str(colIndex)
-            gbRightColIndex.append(colIndex)
+            #FIXME: maybe not colIndex here
+           # gbRightColIndex.append(colIndex)
             colLen = type_length(tn.table_name, colIndex, col.column_type)
             tupleSize += " + " + colLen
 
@@ -2202,7 +2203,9 @@ def generate_code(tree):
                 colType = col.column_type
                 colIndex = col.column_name
                 #print >> sys.stdout,"factTable colIndex "+str(colIndex)
-                gbLeftColIndex.append(colIndex)
+                #FIXME: can't append here, this is select_lst idx not raw tbl_idx?
+               # gbLeftColIndex.append(colIndex)
+                #print >> sys.stdout,"projection? "+ col.evaluate()
                 ctype = to_ctype(colType)
                 colLen = type_length(joinAttr.factTables[0].table_name, colIndex, colType)
             elif isinstance(col, ystree.YConsExp):
@@ -2515,8 +2518,32 @@ def generate_code(tree):
             if joinType == 2:
                 #print >> sys.stdout,"joinAttr.dimTables len "+str(len(joinAttr.dimTables))
                 #print >> sys.stdout,"aggNode len "+str(len(aggNode))
+                hasLeftGroupBy = False
+                hasRightGroupBy = False
                 if (i == len(joinAttr.dimTables)-1 and len(aggNode) > 0):
                     gb_exp_list = aggNode[0].group_by_clause.groupby_exp_list
+
+                    #FIXME determine whether groupBy on left/right table
+                    for i in range(0,len(gb_exp_list)):
+                        test_exp = gb_exp_list[i]
+                        if isinstance(test_exp, ystree.YRawColExp):
+                            #print >> sys.stdout,"gb_exp_list " + test_exp.evaluate()
+                            temp = test_exp.evaluate()
+                            tbl_name = temp[:temp.find(".")]
+                            gbIdx = int(temp[temp.find(".")+1:])
+                            #print >> sys.stdout,"table name "+tbl_name
+                            #print >> sys.stdout,"gbIdx "+str(gbIdx)
+                            if tbl_name in leftTableList:
+                                gbLeftColIndex.append(gbIdx)
+                            if tbl_name in rightTableList:
+                                gbRightColIndex.append(gbIdx)
+
+                            #print >> sys.stdout,"left table "+leftTableList[0]
+                            
+                            #print >> sys.stdout,"L "+str(gbLeftColIndex[0]) # this is orig? or tbl_idx?
+                            #print >> sys.stdout,"R "+str(gbRightColIndex[0])
+
+
                     #print >>fo, "\t\tprintf("+ str(gb_exp_list) +");"
                     #print >>fo, "\t\tprintf("+ str(len(select_list)) +");" # len=1
                     #print >>fo, "\t\tprintf("+ str(len(aggNode)) +");" # len=1
@@ -2536,21 +2563,24 @@ def generate_code(tree):
                     print >>fo, "\t\tgbNode->groupByColNum = " + str(gbLen) + ";"
                     print >>fo, "\t\tgbNode->groupByIndex = (int *)malloc(sizeof(int) * " + str(gbLen) + ");"
                     print >>fo, "\t\tCHECK_POINTER(gbNode->groupByIndex);"
-                    print >>fo, "\t\tgbNode->gbLeftColIndex = (int *)malloc(sizeof(int) * " + str(gbLeftColLen) + ");"
-                    print >>fo, "\t\tCHECK_POINTER(gbNode->gbLeftColIndex);"
-                    print >>fo, "\t\tgbNode->gbRightColIndex = (int *)malloc(sizeof(int) * " + str(gbRightColLen) + ");"
-                    print >>fo, "\t\tCHECK_POINTER(gbNode->gbRightColIndex);"
+                    if gbLeftColLen > 0:
+                        print >>fo, "\t\tgbNode->gbLeftColIndex = (int *)malloc(sizeof(int) * " + str(gbLeftColLen) + ");"
+                        print >>fo, "\t\tCHECK_POINTER(gbNode->gbLeftColIndex);"
+                    if gbRightColLen > 0:
+                        print >>fo, "\t\tgbNode->gbRightColIndex = (int *)malloc(sizeof(int) * " + str(gbRightColLen) + ");"
+                        print >>fo, "\t\tCHECK_POINTER(gbNode->gbRightColIndex);"
                     #print >>fo, "\tgbNode->groupByType = (int *)malloc(sizeof(int) * " + str(gbLen) + ");"
                     #print >>fo, "\tCHECK_POINTER(gbNode->groupByType);"
                     #print >>fo, "\tgbNode->groupBySize = (int *)malloc(sizeof(int) * " + str(gbLen) + ");"
                     #print >>fo, "\tCHECK_POINTER(gbNode->groupBySize);"
                     for j in range(0, gbLeftColLen):
-                        idx = factDict[gbLeftColIndex[j]]
-                        print >>fo, "\t\tgbNode->gbLeftColIndex["+str(j)+"] = " + str(idx) + ";"
+                        #idx = factDict[gbLeftColIndex[j]] # what this mapping for?
+                        #print >>fo, "\t\tgbNode->gbLeftColIndex["+str(j)+"] = " + str(idx) + ";"
+                        print >>fo, "\t\tgbNode->gbLeftColIndex["+str(j)+"] = " + str(gbLeftColIndex[0]) + ";"
 
                     for j in range(0, gbRightColLen):
-                        idx = dimDict[gbRightColIndex[j]]
-                        print >>fo, "\t\tgbNode->gbRightColIndex["+str(j)+"] = " + str(idx) + ";"
+                        #idx = dimDict[gbRightColIndex[j]]
+                        print >>fo, "\t\tgbNode->gbRightColIndex["+str(j)+"] = " + str(gbRightColIndex[0]) + ";"
 
 
                     # bool to judge which index for gbExp[i] to parse
@@ -2589,7 +2619,7 @@ def generate_code(tree):
                         if isinstance(exp, ystree.YFuncExp):
                             #remap select_list-reordered idx to map tbl_idx
                             #print >> sys.stdout,"selectLen "+str(selectLen)
-                            #print >> sys.stdout,"Agg func index (orig select_lst idx)"+exp.evaluate() 
+                           # print >> sys.stdout,"Agg func index (orig select_lst idx)"+exp.evaluate() 
                             temp = exp.evaluate()
                             temp = temp[temp.find("(")+1:temp.find(")")]
                             temp_lst = temp.split(",")
@@ -2608,7 +2638,7 @@ def generate_code(tree):
                                 #lAggLen = len(leftAggList)
                                 print >>fo, "\t\tgbNode->leftAggNum = " + str(lAggLen) + ";"
                                 print >>fo, "\t\tgbNode->leftAggColIndex = (int *) malloc(sizeof(int) *" + str(lAggLen) + ");"
-                                print >>fo, "\t\tCHECK_POINTER(leftAggColIndex);"
+                                print >>fo, "\t\tCHECK_POINTER(gbNode->leftAggColIndex);"
                                 for j in range(0, lAggLen):
                                     print >>fo, "\t\tgbNode->leftAggColIndex[" + str(j) + "] = " + str(leftAggList[j]) + ";"
     
@@ -2616,7 +2646,7 @@ def generate_code(tree):
                                 #print >> sys.stdout, "rightAggList "+str(rightAggList[0])
                                 print >>fo, "\t\tgbNode->rightAggNum = " + str(lAggLen) + ";"
                                 print >>fo, "\t\tgbNode->rightAggColIndex = (int *) malloc(sizeof(int) *" + str(rAggLen) + ");"
-                                print >>fo, "\t\tCHECK_POINTER(rightAggColIndex);"
+                                print >>fo, "\t\tCHECK_POINTER(gbNode->rightAggColIndex);"
                                 for j in range(0, rAggLen):
                                     print >>fo, "\t\tgbNode->rightAggColIndex[" + str(j) + "] = " + str(rightAggList[j]) + ";"
 

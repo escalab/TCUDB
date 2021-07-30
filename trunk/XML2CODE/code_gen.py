@@ -1100,7 +1100,7 @@ def generate_code(tree):
             ctype = to_ctype(col.column_type)
             colIndex = int(col.column_name)
             #print >> sys.stdout,"dimTable colIndex "+str(colIndex)
-            #FIXME: maybe not colIndex here
+            #Note: maybe not colIndex here
            # gbRightColIndex.append(colIndex)
             colLen = type_length(tn.table_name, colIndex, col.column_type)
             tupleSize += " + " + colLen
@@ -2203,7 +2203,7 @@ def generate_code(tree):
                 colType = col.column_type
                 colIndex = col.column_name
                 #print >> sys.stdout,"factTable colIndex "+str(colIndex)
-                #FIXME: can't append here, this is select_lst idx not raw tbl_idx?
+                #NOTE: can't append here, this is select_lst idx not raw tbl_idx?
                # gbLeftColIndex.append(colIndex)
                 #print >> sys.stdout,"projection? "+ col.evaluate()
                 ctype = to_ctype(colType)
@@ -2514,7 +2514,7 @@ def generate_code(tree):
             rOutLen = len(rOutList)
           #  print >>fo, "\t\t" + "printf(lOut:" + str(lOutLen)+ " rOut:" + str(rOutLen) + ");"
 
-            # TODO: pass gbNode info to tcuJoin node, colIndex 
+            # pass gbNode info to tcuJoin node, colIndex 
             if joinType == 2:
                 #print >> sys.stdout,"joinAttr.dimTables len "+str(len(joinAttr.dimTables))
                 #print >> sys.stdout,"aggNode len "+str(len(aggNode))
@@ -2563,11 +2563,19 @@ def generate_code(tree):
                     print >>fo, "\t\tgbNode->groupByColNum = " + str(gbLen) + ";"
                     print >>fo, "\t\tgbNode->groupByIndex = (int *)malloc(sizeof(int) * " + str(gbLen) + ");"
                     print >>fo, "\t\tCHECK_POINTER(gbNode->groupByIndex);"
+
+                    print >>fo, "\t\tgbNode->gbLeftColIndex = NULL;"
+                    print >>fo, "\t\tgbNode->gbRightColIndex = NULL;"
+                    print >>fo, "\t\tgbNode->leftAggColIndex = NULL;"
+                    print >>fo, "\t\tgbNode->rightAggColIndex = NULL;"
                     if gbLeftColLen > 0:
-                        print >>fo, "\t\tgbNode->gbLeftColIndex = (int *)malloc(sizeof(int) * " + str(gbLeftColLen) + ");"
+                        #FIXME: use calloc instead
+                        #print >>fo, "\t\tgbNode->gbLeftColIndex = (int *)malloc(sizeof(int) * " + str(gbLeftColLen) + ");"
+                        print >>fo, "\t\tgbNode->gbLeftColIndex = (int*)calloc(" + str(gbLeftColLen) + ", sizeof(int));"
                         print >>fo, "\t\tCHECK_POINTER(gbNode->gbLeftColIndex);"
                     if gbRightColLen > 0:
-                        print >>fo, "\t\tgbNode->gbRightColIndex = (int *)malloc(sizeof(int) * " + str(gbRightColLen) + ");"
+                        #print >>fo, "\t\tgbNode->gbRightColIndex = (int *)malloc(sizeof(int) * " + str(gbRightColLen) + ");"
+                        print >>fo, "\t\tgbNode->gbRightColIndex = (int *)calloc(" + str(gbRightColLen) + ", sizeof(int));"
                         print >>fo, "\t\tCHECK_POINTER(gbNode->gbRightColIndex);"
                     #print >>fo, "\tgbNode->groupByType = (int *)malloc(sizeof(int) * " + str(gbLen) + ");"
                     #print >>fo, "\tCHECK_POINTER(gbNode->groupByType);"
@@ -2637,7 +2645,8 @@ def generate_code(tree):
                                 #print >> sys.stdout, "leftAggList "+str(leftAggList[0])
                                 #lAggLen = len(leftAggList)
                                 print >>fo, "\t\tgbNode->leftAggNum = " + str(lAggLen) + ";"
-                                print >>fo, "\t\tgbNode->leftAggColIndex = (int *) malloc(sizeof(int) *" + str(lAggLen) + ");"
+                                #print >>fo, "\t\tgbNode->leftAggColIndex = (int *) malloc(sizeof(int) *" + str(lAggLen) + ");"
+                                print >>fo, "\t\tgbNode->leftAggColIndex = (int*) calloc(" + str(lAggLen) + ", sizeof(int));"
                                 print >>fo, "\t\tCHECK_POINTER(gbNode->leftAggColIndex);"
                                 for j in range(0, lAggLen):
                                     print >>fo, "\t\tgbNode->leftAggColIndex[" + str(j) + "] = " + str(leftAggList[j]) + ";"
@@ -2645,7 +2654,8 @@ def generate_code(tree):
                             if (rAggLen > 0):
                                 #print >> sys.stdout, "rightAggList "+str(rightAggList[0])
                                 print >>fo, "\t\tgbNode->rightAggNum = " + str(lAggLen) + ";"
-                                print >>fo, "\t\tgbNode->rightAggColIndex = (int *) malloc(sizeof(int) *" + str(rAggLen) + ");"
+                                #print >>fo, "\t\tgbNode->rightAggColIndex = (int *) malloc(sizeof(int) *" + str(rAggLen) + ");"
+                                print >>fo, "\t\tgbNode->rightAggColIndex = (int*) calloc(" + str(rAggLen) + ", sizeof(int));"
                                 print >>fo, "\t\tCHECK_POINTER(gbNode->rightAggColIndex);"
                                 for j in range(0, rAggLen):
                                     print >>fo, "\t\tgbNode->rightAggColIndex[" + str(j) + "] = " + str(rightAggList[j]) + ";"

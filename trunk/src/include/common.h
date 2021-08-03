@@ -229,10 +229,14 @@ struct groupByNode{
     int aggFuncIndex;           /* the index of SUM function expression */
     int *gbLeftColIndex;         /* Fact table column index mapping */
     int *gbRightColIndex;         /* Dim table column index mapping */
+    //int *gbLeftColIndex = NULL;         /* Fact table column index mapping */
+    //int *gbRightColIndex = NULL;         /* Dim table column index mapping */
     int leftAggNum;
     int rightAggNum;
     int *leftAggColIndex;
     int *rightAggColIndex;
+    //int *leftAggColIndex = NULL;
+    //int *rightAggColIndex = NULL;
 };
 
 struct sortRecord{

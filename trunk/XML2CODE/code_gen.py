@@ -457,7 +457,7 @@ def get_tables(tree, joinAttr, aggNode, orderbyNode):
             temp_exp = exp.evaluate()
             tbl_idx = temp_exp[temp_exp.find(".")+1:]
             selectListDict[orig_selectlst_idx] = tbl_idx
-            #print >> sys.stdout, "tbl idx "+exp.evaluate()+" orig select_lst idx "+ str(orig_selectlst_idx)
+            #print >> sys.stdout, "final tbl idx "+exp.evaluate()+" orig select_lst idx "+ str(orig_selectlst_idx)
             #print >> sys.stdout, "selectListDict["+str(orig_selectlst_idx)+"] = "+str(selectListDict[orig_selectlst_idx])
             orig_selectlst_idx += 1
 
@@ -568,11 +568,10 @@ def get_tables(tree, joinAttr, aggNode, orderbyNode):
                     print 1/0
             else:
                 colIndex = exp.column_name
-            #print >> sys.stdout,"dimIndex insert "+str(colIndex)
             joinAttr.dimIndex.insert(0, colIndex)
 
         if isinstance(tree.right_child, ystree.TableNode):
-            #print >> sys.stdout,"dimIndex insert2 "+str(colIndex)
+            #print >> sys.stdout,"dimIndex insert "+str(colIndex)
             joinAttr.dimTables.insert(0, tree.right_child)
 
         get_tables(tree.left_child, joinAttr, aggNode, orderbyNode)
@@ -1100,8 +1099,6 @@ def generate_code(tree):
             ctype = to_ctype(col.column_type)
             colIndex = int(col.column_name)
             #print >> sys.stdout,"dimTable colIndex "+str(colIndex)
-            #Note: maybe not colIndex here
-           # gbRightColIndex.append(colIndex)
             colLen = type_length(tn.table_name, colIndex, col.column_type)
             tupleSize += " + " + colLen
 
@@ -2190,7 +2187,6 @@ def generate_code(tree):
 
         indexList = []
         colList = []
-        #leftTableList = []
         generate_col_list2(joinAttr.factTables[0],indexList,colList,leftTableList)
         #print >> sys.stdout,"leftTableList "+leftTableList[0]
         totalAttr = len(indexList)
@@ -2202,10 +2198,6 @@ def generate_code(tree):
             if isinstance(col, ystree.YRawColExp):
                 colType = col.column_type
                 colIndex = col.column_name
-                #print >> sys.stdout,"factTable colIndex "+str(colIndex)
-                #NOTE: can't append here, this is select_lst idx not raw tbl_idx?
-               # gbLeftColIndex.append(colIndex)
-                #print >> sys.stdout,"projection? "+ col.evaluate()
                 ctype = to_ctype(colType)
                 colLen = type_length(joinAttr.factTables[0].table_name, colIndex, colType)
             elif isinstance(col, ystree.YConsExp):
@@ -2531,17 +2523,19 @@ def generate_code(tree):
                             temp = test_exp.evaluate()
                             tbl_name = temp[:temp.find(".")]
                             gbIdx = int(temp[temp.find(".")+1:])
-                            #print >> sys.stdout,"table name "+tbl_name
-                            #print >> sys.stdout,"gbIdx "+str(gbIdx)
+                            #print >> sys.stdout,"gb table name "+tbl_name+" gbIdx "+str(gbIdx)
+                          #  print >> sys.stdout,"gb table name "+tbl_name+" gbIdx "+str(selectListDict[gbIdx])
+                            gbIdx = selectListDict[gbIdx]
+
                             if tbl_name in leftTableList:
                                 gbLeftColIndex.append(gbIdx)
+                                #print >> sys.stdout, "gb left colIndex: "+str(gbIdx)
                             if tbl_name in rightTableList:
                                 gbRightColIndex.append(gbIdx)
+                                #print >> sys.stdout, "gb right colIndex: "+str(gbIdx)
 
                             #print >> sys.stdout,"left table "+leftTableList[0]
                             
-                            #print >> sys.stdout,"L "+str(gbLeftColIndex[0]) # this is orig? or tbl_idx?
-                            #print >> sys.stdout,"R "+str(gbRightColIndex[0])
 
 
                     #print >>fo, "\t\tprintf("+ str(gb_exp_list) +");"

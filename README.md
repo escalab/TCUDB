@@ -25,6 +25,8 @@ cd src/utility/
 make loader
 ./gpuDBLoader --lineorder ../../test/dbgen/lo_q1_1_sf1_enc.tbl --ddate ../../test/dbgen/d_q1_1_sf1_enc.tbl
 ```
+Encoded tables for demo purpose can be downloaded here -- [lineorder table](https://drive.google.com/file/d/10vnbnZVSolseSZr78x6HP1W7l_jGlRJa/view?usp=sharing) and [date table](https://drive.google.com/file/d/1-PvnQj0ntx-J7hNTPa6zwgiz-3LvqYUu/view?usp=sharing)
+
 ### Parse query and generate CUDA driver
 Back to `trunk` directory.
 ```

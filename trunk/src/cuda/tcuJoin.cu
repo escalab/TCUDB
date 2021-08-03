@@ -541,6 +541,7 @@ __host__ int getMaxVal(char *column, size_t tupleNum, int attrType) {
 
     for (int i = 0; i < tupleNum; i++) {
         int *val = (int*)&column[i*attrType];
+        //printf("i: %d\tval: %d\n", i, *val);
         //if (*val > 100000)
         //    printf("i: %d\tval: %d\n", i, *val);
         if (localMax < *val) {
@@ -948,8 +949,6 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
 
     // scan to find #uniq_k -- assume known in DB, won't time this part
     int uniq_K = max(maxLeftJoin, maxRightJoin)+1;
-    printf("M: %d N: %d\n", leftTupleNum, rightTupleNum);
-    printf("MATRIX_K: %d\n", uniq_K);
 #ifdef DEBUG
     printf("M: %d N: %d\n", leftTupleNum, rightTupleNum);
     printf("MATRIX_K: %d\n", uniq_K);
@@ -1027,6 +1026,14 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
 //    int gbLeftIndex = gb->gbLeftColIndex[0];
 //    int gbRightIndex = gb->gbRightColIndex[0];
     int gbLeftIndex = -1, gbRightIndex = -1;
+    if (gb && gb->gbLeftColIndex != NULL && gb->gbRightColIndex != NULL) {
+#ifdef DEBUG
+        printf("group by both left and right\n");
+#endif
+        gbLeftIndex = gb->gbLeftColIndex[0];
+        gbRightIndex = gb->gbRightColIndex[0];
+    }
+
     if (gb && gb->gbLeftColIndex != NULL) {
 #ifdef DEBUG
         printf("group by left\n");
@@ -1041,38 +1048,11 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
         gbRightIndex = gb->gbRightColIndex[0];
     }
 
+#ifdef DEBUG
     printf("LgbIdx: %d\tRgbIdx: %d\n", gbLeftIndex, gbRightIndex);
     printf("leftTupleNum: %d\trightTupleNum: %d\n", leftTupleNum, rightTupleNum);
-    //FIXME: check what determines content[?] and raw table data column
-    //printf("gbL: %d\tgbR: %d\n", gbLeftIndex, gbRightIndex);
+#endif
 
-    /*
-    int *test1 = (int*)&jNode->leftTable->content[gbLeftIndex][4];
-    int *test2 = (int*)&jNode->rightTable->content[gbRightIndex][4];
-    int t1max = 0, t2max = 0;
-    for (int i = 0; i < leftTupleNum; i++) {
-        int *t = (int*)&jNode->leftTable->content[gbLeftIndex][i*4];
-        t1max = max(t1max, *t);
-        if (*t > 10000) {
-            printf("left val: %d\tindex: %d\n", *t, i*4);
-            break;
-        }
-    }
-
-    for (int i = 0; i < rightTupleNum; i++) {
-        int *t = (int*)&jNode->rightTable->content[gbRightIndex][i*4];
-        t2max = max(t2max, *t);
-        if (*t > 10000) {
-            printf("right val: %d\tindex: %d\n", *t, i*4);
-            break;
-        }
-
-    }
-    printf("t1max: %d\tt2max: %d\n", t1max, t2max);
-    
-    printf("second left gb content: %d\n", *test1);
-    printf("second right gb content: %d\n", *test2);
-    */
     if (gb && gbConstant != 1) // contains groupBy keyword
     {
         /*
@@ -1221,7 +1201,9 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
             left_gbWidth = getMaxVal(jNode->leftTable->content[gbLeftIndex],
                                      leftTupleNum, 4)+1;
 
+#ifdef DEBUG
             printf("left_gbWidth: %d\n", left_gbWidth);
+#endif
         }
 
         if (gb->leftAggNum == 1) 
@@ -1243,7 +1225,9 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
             // update right_gbWidth
             right_gbWidth = getMaxVal(jNode->rightTable->content[gbRightIndex],
                                       rightTupleNum, 4)+1;
+#ifdef DEBUG
             printf("right_gbWidth: %d\n", right_gbWidth);
+#endif
         }
         //if (rValIndex[0] != -1 || rgbIndex != -1) {
         if (gb->rightAggNum == 1) {
@@ -1327,19 +1311,24 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
         if (gb && gb->gbExp[gb->aggFuncIndex].func == SUM) 
         {
 
-            if (gb->numFuncExpCol == 1) // one dim groupBy 
+            if (gb->numFuncExpCol == 1) // only has one func keyword (groupBy not include) 
             {
                 //if (rValIndex[0] == -1)
-                if (gb->gbLeftColIndex && !gb->gbRightColIndex)
+                if (gb->gbLeftColIndex && gb->gbRightColIndex) //groupBy left and right
+                {
+                    tcuspmm_gbAB(Annz, A_num_rows, A_num_cols,
+                                 Bnnz, B_num_rows, B_num_cols,
+                                 MATRIX_K,
+                                 leftTupleNum, jNode->leftTable->content[jNode->leftKeyIndex],
+                                 jNode->leftTable->content[gb->leftAggColIndex[0]],
+                                 left_gbWidth, jNode->leftTable->content[gbLeftIndex],
+                                 right_gbWidth, jNode->rightTable->content[gbRightIndex],
+                                 rightTupleNum, jNode->rightTable->content[jNode->rightKeyIndex], NULL);
+                }
+                else if (gb->gbLeftColIndex && !gb->gbRightColIndex)
                 {
 #ifdef CUSPARSE
             printf("SSB Q2_1b3\n");
-            //TODO: call tcuspmm_gbA? print gbCount
-            // Annz may change due to dup
-            // A_num_rows == left_gbWidth
-            // A_num_cols == MATRIX_K
-            // maybe no need to cudaMemcpy before if fill on the host
-            
             tcuspmm_gbA(Annz, A_num_rows, A_num_cols,
                         Bnnz, B_num_rows, B_num_cols,
                         MATRIX_K,
@@ -1348,15 +1337,6 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
                         left_gbWidth, jNode->leftTable->content[gbLeftIndex],
                         rightTupleNum, jNode->rightTable->content[jNode->rightKeyIndex],
                         NULL);
-
-            /*
-            tcuspmm(Annz, A_num_rows, A_num_cols,
-                    Bnnz, B_num_rows, B_num_cols,
-                    MATRIX_K, foreignKeySize,
-                    leftTupleNum, gpu_fact, jNode->rightTable->content[0],
-                    rightTupleNum, jNode->rightTable->content[jNode->rightKeyIndex],
-                    jNode->rightTable->content[0]); 
-            */
 
 #else
                     //clock_gettime(CLOCK_REALTIME, &fill_start);
@@ -1373,7 +1353,6 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
                                 leftTupleNum,
                                 jNode->leftTable->attrType[jNode->leftKeyIndex],
                                 quantizedScale);
-                        // update MATIRX_M 
 
                     } 
                     else 
@@ -1606,6 +1585,7 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
 #endif
                 } // groupBy right
             } // end of gb->numFuncExpCol == 1
+            // somehow hardcode here
             else if (!jNode->rightOutputAttrNum && gb->numFuncExpCol == 2 && gb->math_op == MULTIPLY)
             {
 #ifdef CUSPARSE

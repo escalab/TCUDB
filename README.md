@@ -1,80 +1,50 @@
 # TCUDB
 
-## Data generator
+# How to run
 
-Use SSBM plain data generation as an example.
-
-Generate data loader (build xml tree), enter `trunk` directory.
-
-`./translate.py <table_schema>`
-
-e.g.,
+Use script in `trunk` directory to run TCUDB.
 
 ```
-./translate.py test/ssb_test/ssb.schema`
-cd test/dbgen
-make
+./run_ssb_q1_1.sh -q test/emulate/q1_1b1.sql
 ```
 
-Create data with scale factor 1 GB
+# Manually run queries
 
-`./dbgen -vfF -T a -s 1`
-
-Enter `src/utility` directory, and load SSBM data.
-
-Generate "gpuDBLoader" to transform the original data
-
-`make loader` 
-
-## Load data from tables 
-
-
-**`./gpuDBLoader --<table_name> <path_to_table>`**
-
-
-e.g.,
-
+### XML to GPU code.
 ```
-./gpuDBLoader --lineorder ../../test/dbgen/lineorder.tbl \
-               --ddate ../../test/dbgen/date.tbl \
-               --customer ../../test/dbgen/customer.tbl \
-               --supplier ../../test/dbgen/supplier.tbl \
-               --part ../../test/dbgen/part.tbl
-```
-or
-
-```
-./gpuDBLoader --mat3 ../../test/dbgen/mat3.tbl \
-              --mat4 ../../test/dbgen/mat4.tbl
+./translate.py test/emulate/ssb.schema
 ```
 
-## CUDA code generation (e.g., driver.cu)
+### Load data. (Need to know what tables are going to be used)
 
-**`./translate.py <query> <table_schema>`**
+The following code snippet uses SSB q1_1.sql as an example.
 
-e.g.,
+For TCUDB, both tables require the join keys to be encoded in `integer` type instead of the original `date` type.
+```
+cd src/utility/
+make loader
+./gpuDBLoader --lineorder ../../test/dbgen/lo_q1_1_sf1_enc.tbl --ddate ../../test/dbgen/d_q1_1_sf1_enc.tbl
+```
+### Parse query and generate CUDA driver
+Back to `trunk` directory.
+```
+cd ../../
+./translate.py test/emulate/q1_1b1.sql test/emulate/ssb.schema
+```
 
-`./translate.py test/ssb_test/q1_1.sql test/ssb_test/ssb.schema`
+### Compile TCU node
+Through the `Makefile` in `src/cuda`, there are some compile flags provided.
 
-or
+`-DCUSPARSE` -- Using cuSPARSE APIs. (w/o this falg, TCUDB will use dense-filling method)
+`-DDEBUG` -- print some statistics for debugging
 
-`./translate.py test/simple_test/test4.sql test/simple_test/simple.schema`
+```
+cd src/cuda
+make clean && make tcudb
+```
+### Run a query
+```
+./TCUDB --datadir ../utility/
+```
 
-Enter `src/cuda` or `src/opencl` directory
-(make sure the gencode arch for the GPU device, modify the makefile in `src/cuda`, ).
-
-Note: This experiment was conducted using NVIDIA RTX2080: `-gencode arch=compute_70,code=sm_70 -gencode arch=compute_75,code=sm_75`
-
-Generate an executable program `GPUDATABASE` (main program).
-
-`make gpudb`
-
-Run query (e.g., datadir is where binary table files such as MAT30, MAT31, MAT32, MAT40...etc are located).
-
-**`./GPUDATABASE --datadir dir`**
-
-e.g., 
-
-`./GPUDATABASE --datadir ../utility/`
-
-Example output for `test3.sql` and `test4.sql`: [Example_results](https://github.com/escalab/TCUDB/blob/master/trunk/test/simple_test/test_result.txt)
+Note: This experiment was conducted using NVIDIA RTX390: `-gencode arch=compute_80,code=sm_80`

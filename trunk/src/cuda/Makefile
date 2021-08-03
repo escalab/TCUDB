@@ -29,7 +29,7 @@ else
 endif
 
 tcudb: tcu cpu
-	 $(NVCC) $(NVCCFLAGS) $(GENCODE_FLAGS) tableScan.o tcuJoin.o driver.o $(LDFLAGS) -o TCUDB $(CUDA_LIB)
+	 $(NVCC) $(NVCCFLAGS) $(GENCODE_FLAGS) tableScan.o tcuSpMM.o tcuJoin.o driver.o $(LDFLAGS) -o TCUDB $(CUDA_LIB)
 
 gpudb: gpu cpu
 	 $(NVCC) $(NVCCFLAGS) $(GENCODE_FLAGS) tableScan.o inviJoin.o hashJoin.o cuckoo.o materialize.o groupby.o orderBy.o driver.o $(LDFLAGS) -o GPUDATABASE
@@ -38,12 +38,12 @@ cpu: driver.cu
 	$(NVCC) -c $(CFLAGS) $(GENCODE_FLAGS) driver.cu
 
 gpu: tableScan.cu hashJoin.cu cuckoo.cu inviJoin.cu materialize.cu groupby.cu orderBy.cu
-#	$(NVCC) -c -g $(GENCODE_FLAGS) tableScan.cu hashJoin.cu cuckoo.cu inviJoin.cu materialize.cu groupby.cu orderBy.cu 
-	$(NVCC) -c -g $(GENCODE_FLAGS) -DMODIFIED tableScan.cu hashJoin.cu cuckoo.cu inviJoin.cu materialize.cu groupby.cu orderBy.cu 
+	$(NVCC) -c -g $(GENCODE_FLAGS) tableScan.cu hashJoin.cu cuckoo.cu inviJoin.cu materialize.cu groupby.cu orderBy.cu 
+#	$(NVCC) -c -g $(GENCODE_FLAGS) -DMODIFIED tableScan.cu hashJoin.cu cuckoo.cu inviJoin.cu materialize.cu groupby.cu orderBy.cu 
 
-tcu: tableScan.cu tcuJoin.cu cuckoo.cu
+tcu: tableScan.cu tcuSpMM.cu tcuJoin.cu cuckoo.cu
 #	$(NVCC) -c -g $(GENCODE_FLAGS) -DCUBLAS_HALF -DDEBUG -DCUSPARSE tableScan.cu tcuJoin.cu 
-	$(NVCC) -c -g $(GENCODE_FLAGS) -DCUBLAS_HALF -DCUSPARSE tableScan.cu tcuJoin.cu 
+	$(NVCC) -c -g $(GENCODE_FLAGS) -DCUBLAS_HALF -DCUSPARSE tableScan.cu tcuSpMM.cu tcuJoin.cu 
 #	$(NVCC) -c -g $(GENCODE_FLAGS) -DCUBLAS_HALF -DDEBUG tableScan.cu tcuJoin.cu 
 #	$(NVCC) -c -g $(GENCODE_FLAGS) -DCUBLAS_HALF tableScan.cu tcuJoin.cu 
 split: msplitKernel.cu msplit.cu tableScan.cu

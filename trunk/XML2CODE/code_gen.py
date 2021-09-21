@@ -1609,7 +1609,7 @@ def generate_code(tree):
             print >>fo, "\t\tstruct tableNode * " + resName + " = " + factName + ";"
 
         factName = resName
-        # FIXME:here is where the second calls to hashJoin happen
+        # FIXME: where the second calls to hashJoin happen
         for i in range(0,len(joinAttr.dimTables)):
             jName = "jNode" + str(i)
             dimName = joinAttr.dimTables[i].table_name.lower() + "Res"
@@ -2440,7 +2440,6 @@ def generate_code(tree):
             hasWhere = 0
             print >>fo, "\t\tstruct tableNode * " + resName + " = " + factName + ";"
 
-        #FIXME: maybe resName didn't be updated
         factName = resName
         for i in range(0,len(joinAttr.dimTables)):
             jName = "jNode" + str(i)
@@ -2563,7 +2562,7 @@ def generate_code(tree):
                     print >>fo, "\t\tgbNode->leftAggColIndex = NULL;"
                     print >>fo, "\t\tgbNode->rightAggColIndex = NULL;"
                     if gbLeftColLen > 0:
-                        #FIXME: use calloc instead
+                        
                         #print >>fo, "\t\tgbNode->gbLeftColIndex = (int *)malloc(sizeof(int) * " + str(gbLeftColLen) + ");"
                         print >>fo, "\t\tgbNode->gbLeftColIndex = (int*)calloc(" + str(gbLeftColLen) + ", sizeof(int));"
                         print >>fo, "\t\tCHECK_POINTER(gbNode->gbLeftColIndex);"

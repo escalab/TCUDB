@@ -45,6 +45,7 @@
 using namespace nvcuda;
 
 #define MAX_THREADS 1024 // For NVIDIA Turing Architecture
+#define BLOCK_SIZE 1024
 
 // Define some error checking macros.
 
@@ -263,6 +264,16 @@ __global__ void static outdegree_fill(char *column_val, half *mat,
     int *val        = (int*)&column_val[index];
     mat[(*val)] = __hadd(mat[(*val)], __int2half_rn(1));
 }
+
+/* COUNT operator (histogram) */
+__global__ void count(char * d_in, int * d_bins, int sz) {
+	int i = blockDim.x * blockIdx.x + threadIdx.x;
+    if (i > sz) return;
+
+	int *idx = (int*)&d_in[i * 4];
+	atomicAdd(&d_bins[(*idx)], 1);
+}
+
 
 #ifdef CUBLAS_HALF
 __global__ void gpu_transpose(half *odata, const half *idata, int row, int col) {
@@ -817,10 +828,9 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
 {
     cudaDeviceReset();
 
-    struct timespec spMemcpy_start, spMemcpy_end;
-    struct timespec cusp_start, cusp_end;
     float initTime, cudaMemcpyTime, fillTime, end2endTime;
     float tcu_compute_time, tcu_groupBy_time;
+    float count_time;
 
     struct tableNode * res = NULL;
     int leftTupleNum  = jNode->leftTable->tupleNum;
@@ -1002,6 +1012,7 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
     char *d_redMat;                   // dense matrix groupBy reduction
     half *d_redMatFp16;
     char *gpu_ldata2;
+    int *d_bins;
 
     float alpha = 1.0f, beta = 0.0f;
     half *d_fp16_A, *d_fp16_BT;
@@ -1024,6 +1035,10 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
     // allocate device memory for join keys
 #ifdef CUSPARSE
     CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&gpu_fact,foreignKeySize));
+    
+    if (gb && gb->gbExp[gb->aggFuncIndex].func == COUNT) {
+        CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&gpu_dim,primaryKeySize));
+    }
 #else
     CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&gpu_fact,foreignKeySize));
     CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&gpu_dim,primaryKeySize));
@@ -1090,7 +1105,11 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
     
     struct gpu_timer cudaMemcpyStart;
 #ifdef CUSPARSE
-    CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(gpu_fact,jNode->leftTable->content[jNode->leftKeyIndex], foreignKeySize,cudaMemcpyHostToDevice));
+    if (gb && gb->gbExp[gb->aggFuncIndex].func == COUNT) {
+        CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(gpu_dim,jNode->rightTable->content[jNode->rightKeyIndex], primaryKeySize,cudaMemcpyHostToDevice));
+    } else {
+        CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(gpu_fact,jNode->leftTable->content[jNode->leftKeyIndex], foreignKeySize,cudaMemcpyHostToDevice));
+    }
 #else
     CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(gpu_fact,jNode->leftTable->content[jNode->leftKeyIndex], foreignKeySize,cudaMemcpyHostToDevice));
     CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(gpu_dim,jNode->rightTable->content[jNode->rightKeyIndex], primaryKeySize,cudaMemcpyHostToDevice));
@@ -1604,7 +1623,12 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
         } // end of func == SUM 
         else if (gb && gb->gbExp[gb->aggFuncIndex].func == COUNT) 
         {
-            
+            printf("PR Q1\n");
+            struct gpu_timer cudaCountStart;
+            CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&d_bins, MATRIX_M * sizeof(int)));
+            CUDA_SAFE_CALL_NO_SYNC(cudaMemset(d_bins, 0, MATRIX_M * sizeof(int)));
+            count<<<(BLOCK_SIZE+MATRIX_N-1)/BLOCK_SIZE, BLOCK_SIZE>>> (gpu_dim, d_bins, MATRIX_N);
+            count_time = cudaCountStart.milliseconds_elapsed();
         } 
         else // simply return Join counts (general matrix-multiplication)
         {
@@ -1676,6 +1700,11 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
 
     printf("Initialization:   %f ms\n", initTime);
     printf("cudaMemcpy:       %f ms\n", cudaMemcpyTime);
+    
+    if (gb && gb->gbExp[gb->aggFuncIndex].func == COUNT) {
+        printf("GPU count time: %f ms\n", count_time);
+    }
+
 #ifdef CUSPARSE
     // sparse-filling time metrics in tcuSpMM
 #else

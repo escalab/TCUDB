@@ -1,0 +1,9 @@
+/*
+Compute out-degree
+*/
+SELECT
+  NODE.ID,
+  COUNT(EDGE.SRC)
+FROM NODE, EDGE
+WHERE NODE.ID = EDGE.SRC
+GROUP BY NODE.ID;

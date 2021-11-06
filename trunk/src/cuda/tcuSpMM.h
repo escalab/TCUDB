@@ -38,6 +38,12 @@ void tcuspmm_gbAB(int Annz, int A_num_rows, int A_num_cols,
                   int right_gbWidth, char *gbBColumn,
                   int rightTupleNum, char *dim, char *rdata);
 
+void tcuspmm_pr(int Annz, int A_num_rows, int A_num_cols,
+             int Bnnz, int B_num_rows, int B_num_cols,
+             int MATRIX_K, int foreignKeySize,
+             int letfTupleNum, char *gpu_fact, char *ldata,
+             int rightTupleNum, char *dim, char *rdata);
+
 void tcuspmm(int Annz, int A_num_rows, int A_num_cols,
              int Bnnz, int B_num_rows, int B_num_cols,
              int MATRIX_K, int foreignKeySize,

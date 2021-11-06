@@ -111,12 +111,12 @@ __global__ void pagerank(char *columnIdx, char *columnVal, int matWidth, half *m
         if (attrType == INT) {
             int *val = (int*)&columnVal[stripe];
             mat[i*matWidth + (*id)] = __float2half((float)1/(*val));
-            //cuPrintf("mat[%d]\t%d\n", i*matWidth + (*id), *val);
+
         } else if (attrType == FLOAT) {
             float *val   = (float*)&columnVal[stripe];
             
             mat[i*matWidth + (*id)] = __float2half((*val)*pagerank_cons);
-            //cuPrintf("mat[%d]\t%.8f\n", i*matWidth + (*id), *val);
+
         }
     }
 }
@@ -135,6 +135,7 @@ __global__ void static gpu_fill(char *column, int matWidth, half *matA,
     int *value   = (int*)&column[index];
     matA[i*matWidth + (*value)] = __float2half(1.0f);
 }
+
 
 __global__ void static gpu_fill_2data(char *join_column, char *data_column, 
         char *data_column2, int matWidth_k, half *matA, size_t tupleNum, 
@@ -177,6 +178,17 @@ __global__ void static gpu_fill_data(char *join_column, char *data_column,
     matA[i * matWidth_k + (*join_value)] = __float2half((float)(*data_value));
 }
 
+__global__ void static gpu_fill_data_pr(char *join_column, char *data_column, 
+    int matWidth_k, half *matA, size_t tupleNum, int attrType, float pagerank_alpha) {
+    int i = blockDim.x * blockIdx.x + threadIdx.x;
+    if (i >= tupleNum) return;
+
+    int index = i * attrType;
+    int *join_value = (int*)&join_column[index];
+    int *data_value = (int*)&data_column[index];
+    matA[i * matWidth_k + (*join_value)] = __float2half((float)((*data_value) * pagerank_alpha));
+}
+
 __global__ void static gpu_fill_gb(char *join_column, char *data_column, 
         int matWidth_k, half *matA, size_t tupleNum, int attrType) {
     int i = blockDim.x * blockIdx.x + threadIdx.x;
@@ -198,6 +210,18 @@ __global__ void static gpu_fill_data_transpose(char *join_column,
     int *join_value = (int*)&join_column[index];
     int *data_value = (int*)&data_column[index];
     matB[(*join_value) * matWidth_n + i] = __float2half((float)(*data_value));
+}
+
+__global__ void static gpu_fill_data_transpose_pr(char *join_column, 
+    char *data_column, int matWidth_n, half *matB, size_t tupleNum, 
+    int attrType) {
+    int i = blockDim.x * blockIdx.x + threadIdx.x;
+    if (i >= tupleNum) return;
+
+    int index = i * attrType;
+    int *join_value = (int*)&join_column[index];
+    int *data_value = (int*)&data_column[index];
+    matB[(*join_value) * matWidth_n + i] = __float2half((float)1.0/(*data_value));
 }
 
 /* Fill matrix with ones according to groupBy column in transpose format. */
@@ -304,7 +328,7 @@ __global__ void static pageRankAdd(float *mat, int n, float pageRankAlpha,
         if (mat[idx] > 1e-6)
         //if (__hgt(mat[idx], __float2half(1e-6))) // precision loss
             mat[idx] += (float)(1-pageRankAlpha)/numNodes;
-            //mat[idx] += __float2half((1-pageRankAlpha)/numNodes);
+
     }
 }
 
@@ -819,7 +843,7 @@ __global__ void gpu_tbl2csr_transpose(int tupleNum,
  * 2. For all demo cases, all column types are INT, only PageRank queries 
  *    contain constant variable such as alpha and number of nodes.
  * 3. To support complex customized queries, code_gen.py modification is required.
- * 4. Metadata such as sparsity and number of non-zero elements are known from user.
+ * 4. Metadata such as sparsity and number of non-zero elements are known from user as meta data.
  * Here, we have our assumption based on our filling methods.
  */
 struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp, 
@@ -940,7 +964,7 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
         gbConstant = 1;
     }
         
-    // handle func first or dense/sparse first -> then update gbMatWidth
+
     int gbLeftIndex = -1, gbRightIndex = -1;
     if (gb && gb->gbLeftColIndex != NULL && gb->gbRightColIndex != NULL) {
 #ifdef DEBUG
@@ -1042,6 +1066,11 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
 #else
     CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&gpu_fact,foreignKeySize));
     CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&gpu_dim,primaryKeySize));
+
+    if (gb && gb->numFuncExpCol == 2 && gb->math_op == DIVIDE) {
+        CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&gpu_ldata,foreignKeySize));
+        CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&gpu_rdata,primaryKeySize));
+    }
 #endif    
     
     // data value - leftAggColIndex, groupBy attribute columnIndex - gbLeftColIndex
@@ -1100,8 +1129,7 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
 
     initTime = initStart.milliseconds_elapsed();
 
-    //FIXME: SSB q1-series sql
-    //quantizedScale = getMaxVal(jNode->leftTable->content[0], jNode->leftTable->tupleNum, jNode->leftOutputAttrType[0]);
+
     
     struct gpu_timer cudaMemcpyStart;
 #ifdef CUSPARSE
@@ -1113,6 +1141,11 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
 #else
     CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(gpu_fact,jNode->leftTable->content[jNode->leftKeyIndex], foreignKeySize,cudaMemcpyHostToDevice));
     CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(gpu_dim,jNode->rightTable->content[jNode->rightKeyIndex], primaryKeySize,cudaMemcpyHostToDevice));
+
+    if (gb && gb->numFuncExpCol == 2 && gb->math_op == DIVIDE) {
+        CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(gpu_ldata,jNode->leftTable->content[jNode->leftOutputIndex[0]], foreignKeySize,cudaMemcpyHostToDevice));
+        CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(gpu_rdata,jNode->rightTable->content[jNode->rightOutputIndex[0]], primaryKeySize,cudaMemcpyHostToDevice));
+    }
 #endif
     
     if (gb && gbConstant != 1) 
@@ -1146,7 +1179,7 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
     }
 
     cudaMemcpyTime = cudaMemcpyStart.milliseconds_elapsed();
-    // TODO: determine whether to use 1) dense 2) cuSPARSE 3) blocked-GeMM
+    // TODO: determine whether to use 1) dense 2) cuSPARSE 3) blocked-GeMM (denseMM)
     // assume sparsity, A_nnz, B_nnz is given
         if (gb && gb->gbExp[gb->aggFuncIndex].func == SUM) 
         {
@@ -1197,6 +1230,7 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
                     } 
                     else 
                     {
+
                         gpu_fill_data<<<(MAX_THREADS+leftTupleNum-1)/MAX_THREADS,MAX_THREADS>>> (gpu_fact,
                         gpu_ldata,    
                         MATRIX_K,
@@ -1611,6 +1645,8 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
 #endif
             } // end of SUM(A.Val * B.Val)
             else if (gb->numFuncExpCol == 2 && gb->math_op == DIVIDE) { // pagerank
+                
+
 #ifdef CUSPARSE
                 tcuspmm_pr(Annz, A_num_rows, A_num_cols,
                     Bnnz, B_num_rows, B_num_cols,
@@ -1618,6 +1654,50 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
                     leftTupleNum, gpu_fact, jNode->leftTable->content[jNode->leftOutputIndex[0]],
                     rightTupleNum, jNode->rightTable->content[jNode->rightKeyIndex],
                     jNode->rightTable->content[jNode->rightOutputIndex[0]]);
+
+#else
+                // dense pr
+                struct gpu_timer fillStart;
+                gpu_fill_data_pr<<<(MAX_THREADS+leftTupleNum-1)/MAX_THREADS,MAX_THREADS>>> (gpu_fact,
+                    gpu_ldata,    
+                    MATRIX_K,
+                    d_fp16_A,
+                    leftTupleNum,
+                    jNode->leftTable->attrType[jNode->leftKeyIndex],
+                    pagerank_alpha);
+
+                gpu_fill_data_transpose_pr<<<(MAX_THREADS+rightTupleNum-1)/MAX_THREADS,MAX_THREADS>>> (
+                    gpu_dim,
+                    gpu_rdata,
+                    MATRIX_N,
+                    d_fp16_BT,
+                    rightTupleNum,
+                    jNode->rightTable->attrType[jNode->rightKeyIndex]);
+                fillTime = fillStart.milliseconds_elapsed();
+                cudaErrCheck(cudaFree(gpu_fact));
+                cudaErrCheck(cudaFree(gpu_ldata));
+                cudaErrCheck(cudaFree(gpu_dim));
+                cudaErrCheck(cudaFree(gpu_rdata));
+                
+                printf("MxK:%dx%d\tKxN:%dx%d\n", MATRIX_M, MATRIX_K, MATRIX_K, MATRIX_N);
+                struct gpu_timer compute_start;
+                cudaErrCheck(cudaEventRecord(startcublasEX));
+                cublasErrCheck(cublasGemmEx(cublasHandle, CUBLAS_OP_N, CUBLAS_OP_N,
+                    MATRIX_N, MATRIX_M, MATRIX_K,
+                    &alpha,
+                    d_fp16_BT, CUDA_R_16F, MATRIX_N,
+                    d_fp16_A, CUDA_R_16F, MATRIX_K,
+                    &beta,
+                    c_cublas, CUDA_R_32F, MATRIX_N,
+                    //CUDA_R_32F, CUBLAS_GEMM_DFALT_TENSOR_OP)); // tcu
+                    CUBLAS_COMPUTE_32F, CUBLAS_GEMM_DEFAULT_TENSOR_OP)); // CUDA 11
+                cudaErrCheck(cudaEventRecord(stopcublasEX));
+                
+                pageRankAdd<<< (MATRIX_M * MATRIX_N + 255) / 256, 256 >>> (c_cublas, MATRIX_M*MATRIX_N, pagerank_alpha, MATRIX_K);
+                tcu_compute_time = compute_start.milliseconds_elapsed();
+                cudaErrCheck(cudaFree(d_fp16_A));
+                cudaErrCheck(cudaFree(d_fp16_BT));
+
 #endif
             }
         } // end of func == SUM 

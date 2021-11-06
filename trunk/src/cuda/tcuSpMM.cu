@@ -844,6 +844,9 @@ void tcuspmm_pr(int Annz, int A_num_rows, int A_num_cols,
 {
     struct timespec fill_start, fill_end;
     struct timespec cusp_start, cusp_end;
+    struct timespec est_start, est_end;
+    struct timespec dryrun_start, dryrun_end;
+    struct timespec actrun_start, actrun_end;
     // struct timespec debug_start, debug_end;
 
     clock_gettime(CLOCK_REALTIME, &fill_start);
@@ -944,6 +947,7 @@ void tcuspmm_pr(int Annz, int A_num_rows, int A_num_cols,
     cusparseSpGEMMDescr_t spgemmDesc;
     cusparseSpGEMM_createDescr(&spgemmDesc);
 
+    clock_gettime(CLOCK_REALTIME, &est_start);
     cusparseSpGEMM_workEstimation(handle, opA, opB,
                                   &alpha, matA, matB, &beta, matC,
                                   computeType, CUSPARSE_SPGEMM_DEFAULT,
@@ -954,16 +958,26 @@ void tcuspmm_pr(int Annz, int A_num_rows, int A_num_cols,
                                   &alpha, matA, matB, &beta, matC,
                                   computeType, CUSPARSE_SPGEMM_DEFAULT,
                                   spgemmDesc, &bufferSize1, dBuffer1);
+    clock_gettime(CLOCK_REALTIME, &est_end);
+    
+    // clock_gettime(CLOCK_REALTIME, &dryrun_start);
     cusparseSpGEMM_compute(handle, opA, opB,
                            &alpha, matA, matB, &beta, matC,
                            computeType, CUSPARSE_SPGEMM_DEFAULT,
                            spgemmDesc, &bufferSize2, NULL);
-
+    // clock_gettime(CLOCK_REALTIME, &dryrun_end);
+    
     cudaMalloc((void**) &dBuffer2, bufferSize2);
-    cusparseSpGEMM_compute(handle, opA, opB,
-                           &alpha, matA, matB, &beta, matC,
-                           computeType, CUSPARSE_SPGEMM_DEFAULT,
-                           spgemmDesc, &bufferSize2, dBuffer2);
+    
+    // comparison with GraphBLAS
+    // clock_gettime(CLOCK_REALTIME, &actrun_start);
+    // for (int i = 0; i < 20; i++) {
+        cusparseSpGEMM_compute(handle, opA, opB,
+                               &alpha, matA, matB, &beta, matC,
+                               computeType, CUSPARSE_SPGEMM_DEFAULT,
+                               spgemmDesc, &bufferSize2, dBuffer2);
+    // }
+    // clock_gettime(CLOCK_REALTIME, &actrun_end);
     cudaEventRecord(stopcusparse, 0);
 
     int64_t C_num_rows1, C_num_cols1, C_nnz1;
@@ -981,10 +995,20 @@ void tcuspmm_pr(int Annz, int A_num_rows, int A_num_cols,
         fill_end.tv_nsec - fill_start.tv_nsec;
     double cusp_preparation = (cusp_end.tv_sec-cusp_start.tv_sec) * BILLION + 
         cusp_end.tv_nsec - cusp_start.tv_nsec;
-    printf("Join counts: %d\n", C_nnz1);
+    double est = (est_end.tv_sec-est_start.tv_sec) * BILLION + 
+        est_end.tv_nsec - est_start.tv_nsec;
+    // double dryrun = (dryrun_end.tv_sec-dryrun_start.tv_sec) * BILLION + 
+    //     dryrun_end.tv_nsec - dryrun_start.tv_nsec;
+    // double actrun = (actrun_end.tv_sec-actrun_start.tv_sec) * BILLION + 
+    //     actrun_end.tv_nsec - actrun_start.tv_nsec;
+    
+        printf("Join counts: %d\n", C_nnz1);
     printf("Data preparation time: %lf ms\n", 
             data_preparation / MILLION);
     printf("cusp init time: %lf ms\n", cusp_preparation / MILLION);
+    printf("estimation time: %lf ms\n", est / MILLION);
+    // printf("dryrun time: %lf ms\n", dryrun / MILLION);
+    // printf("actual run (20 iters) time: %lf ms\n", actrun / MILLION);
     printf("cusparseSpGEMM took %f ms\n", cusparseSpGEMM_time);
     
     // double debug_elapse = (debug_end.tv_sec-debug_start.tv_sec) * BILLION + 

@@ -38,16 +38,17 @@ cpu: driver.cu
 	$(NVCC) -c $(CFLAGS) $(GENCODE_FLAGS) driver.cu
 
 gpu: tableScan.cu hashJoin.cu cuckoo.cu inviJoin.cu materialize.cu groupby.cu orderBy.cu
-	$(NVCC) -c -g $(GENCODE_FLAGS) tableScan.cu hashJoin.cu cuckoo.cu inviJoin.cu materialize.cu groupby.cu orderBy.cu 
-#	$(NVCC) -c -g $(GENCODE_FLAGS) -DMODIFIED tableScan.cu hashJoin.cu cuckoo.cu inviJoin.cu materialize.cu groupby.cu orderBy.cu 
+#	$(NVCC) -c -g $(GENCODE_FLAGS) tableScan.cu hashJoin.cu cuckoo.cu inviJoin.cu materialize.cu groupby.cu orderBy.cu 
+	$(NVCC) -c -g $(GENCODE_FLAGS) -DMODIFIED tableScan.cu hashJoin.cu cuckoo.cu inviJoin.cu materialize.cu groupby.cu orderBy.cu 
 
 tcu: tableScan.cu tcuSpMM.cu tcuJoin.cu cuckoo.cu
-#	$(NVCC) -c -g $(GENCODE_FLAGS) -DCUBLAS_HALF -DDEBUG -DCUSPARSE tableScan.cu tcuJoin.cu 
-	$(NVCC) -c -g $(GENCODE_FLAGS) -DCUBLAS_HALF -DCUSPARSE tableScan.cu tcuSpMM.cu tcuJoin.cu 
-#	$(NVCC) -c -g $(GENCODE_FLAGS) -DCUBLAS_HALF -DDEBUG tableScan.cu tcuJoin.cu 
-#	$(NVCC) -c -g $(GENCODE_FLAGS) -DCUBLAS_HALF tableScan.cu tcuJoin.cu 
-split: msplitKernel.cu msplit.cu tableScan.cu
-	$(NVCC) -c -g $(GENCODE_FLAGS) msplitKernel.cu msplit.cu tableScan.cu
+#	$(NVCC) -c -g $(GENCODE_FLAGS) -DCUBLAS_HALF -DDEBUG -DCUSPARSE tableScan.cu tcuJoin.cu tcuSpMM.cu
+		$(NVCC) -c -g $(GENCODE_FLAGS) -DCUBLAS_HALF -DCUSPARSE tableScan.cu tcuSpMM.cu tcuJoin.cu
+#	$(NVCC) -c -g $(GENCODE_FLAGS) -DCUBLAS_HALF tableScan.cu tcuJoin.cu tcuSpMM.cu
+
+
+blockGEMM: blockGEMMKernel.cu blockGEMM.cu tableScan.cu
+	$(NVCC) -c -g $(GENCODE_FLAGS) blockGEMMKernel.cu blockGEMM.cu tableScan.cu
 	
 all: tcudb
 

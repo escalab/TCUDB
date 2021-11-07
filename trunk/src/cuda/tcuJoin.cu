@@ -1062,18 +1062,17 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
     if (gb && gb->gbExp[gb->aggFuncIndex].func == COUNT) {
         CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&gpu_dim,primaryKeySize));
     }
-    if (gb && gb->numFuncExpCol == 2 && gb->math_op == MULTIPLY) {
-        printf("micro-q4 ldate/rdata malloc\n");
-        CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&gpu_fact,foreignKeySize));
-        CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&gpu_dim,primaryKeySize));
-        CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&gpu_ldata,foreignKeySize));
-        CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&gpu_rdata,primaryKeySize));
-    }
+    
 #else
     CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&gpu_fact,foreignKeySize));
     CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&gpu_dim,primaryKeySize));
 
     if (gb && gb->numFuncExpCol == 2 && gb->math_op == DIVIDE) {
+        CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&gpu_ldata,foreignKeySize));
+        CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&gpu_rdata,primaryKeySize));
+    }
+
+    if (gb && gb->numFuncExpCol == 2 && gb->math_op == MULTIPLY) {
         CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&gpu_ldata,foreignKeySize));
         CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&gpu_rdata,primaryKeySize));
     }
@@ -1125,12 +1124,7 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
 
 #ifdef CUSPARSE
      
-    if (gb && gb->numFuncExpCol == 2 && gb->math_op == MULTIPLY) {
-        c_host_cublas = (float*)calloc(MATRIX_M*MATRIX_N, sizeof(float));
-        CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&c_cublas,(uint64_t)MATRIX_M*(uint64_t)MATRIX_N*sizeof(float)));
-        CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&d_fp16_A,(uint64_t)MATRIX_M*(uint64_t)MATRIX_K*sizeof(half)));
-        CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&d_fp16_BT,(uint64_t)MATRIX_K*(uint64_t)MATRIX_N*sizeof(half)));
-    }
+   
 #else
     // dense filling
     c_host_cublas = (float*)calloc(MATRIX_M*MATRIX_N, sizeof(float));
@@ -1148,27 +1142,21 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
 #ifdef CUSPARSE
     if (gb && gb->gbExp[gb->aggFuncIndex].func == COUNT) {
         CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(gpu_dim,jNode->rightTable->content[jNode->rightKeyIndex], primaryKeySize,cudaMemcpyHostToDevice));
-    } else if (gb && gb->numFuncExpCol == 2 && gb->math_op == MULTIPLY) {
-        printf("micro-q4 ldate/rdata memcpy\n");
-        CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(gpu_fact,jNode->leftTable->content[jNode->leftKeyIndex], foreignKeySize,cudaMemcpyHostToDevice));
-        CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(gpu_dim,jNode->rightTable->content[jNode->rightKeyIndex], primaryKeySize,cudaMemcpyHostToDevice));
-        CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(gpu_ldata,jNode->leftTable->content[jNode->leftOutputIndex[0]], foreignKeySize,cudaMemcpyHostToDevice));
-        CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(gpu_rdata,jNode->rightTable->content[jNode->rightOutputIndex[0]], primaryKeySize,cudaMemcpyHostToDevice));
-    }
+    } 
     else {
         CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(gpu_fact,jNode->leftTable->content[jNode->leftKeyIndex], foreignKeySize,cudaMemcpyHostToDevice));
     }
 
-    // if (gb && gb->numFuncExpCol == 2 && gb->math_op == MULTIPLY) {
-    //     printf("micro-q4 ldate/rdata memcpy\n");
-    //     CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(gpu_dim,jNode->rightTable->content[jNode->rightKeyIndex], primaryKeySize,cudaMemcpyHostToDevice));
-    //     CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(gpu_fact,jNode->leftTable->content[jNode->leftKeyIndex], foreignKeySize,cudaMemcpyHostToDevice));
-    // }
 #else
     CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(gpu_fact,jNode->leftTable->content[jNode->leftKeyIndex], foreignKeySize,cudaMemcpyHostToDevice));
     CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(gpu_dim,jNode->rightTable->content[jNode->rightKeyIndex], primaryKeySize,cudaMemcpyHostToDevice));
 
     if (gb && gb->numFuncExpCol == 2 && gb->math_op == DIVIDE) {
+        CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(gpu_ldata,jNode->leftTable->content[jNode->leftOutputIndex[0]], foreignKeySize,cudaMemcpyHostToDevice));
+        CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(gpu_rdata,jNode->rightTable->content[jNode->rightOutputIndex[0]], primaryKeySize,cudaMemcpyHostToDevice));
+    }
+
+    if (gb && gb->numFuncExpCol == 2 && gb->math_op == MULTIPLY) {
         CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(gpu_ldata,jNode->leftTable->content[jNode->leftOutputIndex[0]], foreignKeySize,cudaMemcpyHostToDevice));
         CUDA_SAFE_CALL_NO_SYNC(cudaMemcpy(gpu_rdata,jNode->rightTable->content[jNode->rightOutputIndex[0]], primaryKeySize,cudaMemcpyHostToDevice));
     }
@@ -1622,9 +1610,8 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
                         printf("GroupBy Count: %d\n", h_gbCount);
                     }
             }
-            else if (gb->numFuncExpCol == 2 && gb->math_op == MULTIPLY) // can't differentiate sec3-q4 and ssb q1_1b1.sql 
+            else if (gb->numFuncExpCol == 2 && gb->math_op == MULTIPLY) 
             {
-                //printf("sec3-q4\n");
                 struct gpu_timer fillStart;
                 gpu_fill_data<<<(MAX_THREADS+leftTupleNum-1)/MAX_THREADS,MAX_THREADS>>> (gpu_fact,
                     gpu_ldata,    
@@ -1815,7 +1802,7 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
     // sparse-filling time metrics in tcuSpMM
     if (gb && gb->numFuncExpCol == 2 && gb->math_op == MULTIPLY) {
         printf("Matrices filling: %f ms\n", fillTime);
-        printf("TCU compute time: %f ms\n", tcu_compute_time);
+         printf("TCU compute time: %f ms\n", tcu_compute_time);
     }
 #else
     // dense-filling time metrics

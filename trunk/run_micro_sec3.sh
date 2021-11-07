@@ -23,6 +23,6 @@ echo "run micro_q3.sql"
 cd ../../
 ./translate.py test/micro_test/micro_q4.sql test/micro_test/micro.schema
 cd src/cuda
-make clean && make tcudb
+make clean && make tcudb_dense
 echo "run micro_q4.sql"
 ./TCUDB --datadir ../utility/

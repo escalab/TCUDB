@@ -148,7 +148,9 @@ __global__ void static gpu_fill_2data(char *join_column, char *data_column,
     int *data_value = (int*)&data_column[index];// val
     int *data2 = (int*)&data_column2[index];    // row
     matA[(*data2) * matWidth_k + (*join_value)] = __float2half((float)(*data_value)/scale);
-    //printf("matA[%d]: %f\n", (*data2) * matWidth_k + (*join_value), (float)(*data_value)/scale);
+    // matA[(*data2) * matWidth_k + (*join_value)] = __float2half(65504.0f);
+
+    // printf("matA[%d]: %f\n", (*data2) * matWidth_k + (*join_value), (float)(*data_value)/scale);
     //matA[(*data2) * matWidth_k + (*join_value)] = __float2half(65504.0f);
     //printf("row: %d\tcol: %d\tval: %d\n", *data2, *join_value, *data_value);
 }
@@ -388,6 +390,17 @@ __global__ void placeCount(float *out, float *in, unsigned size)
         out[tid] = 0.0f;
 }
 
+__global__ void placeCount_quantize(float *out, float *in, unsigned size, int quantizedScale)
+{
+    unsigned int tid = threadIdx.x + blockDim.x * blockIdx.x;
+    if (tid >= size) return;
+    printf("dequantize in[%d]: %f\n", tid,in[tid] * quantizedScale);
+    if (in[tid] * quantizedScale > 0.00001)
+        out[tid] = 1.0f;
+    else
+        out[tid] = 0.0f;
+}
+
 __host__ uint64_t getCount(float *in, uint64_t size)
 {
     const uint64_t asumLen = 2e9;
@@ -576,9 +589,8 @@ __host__ int getMaxVal(char *column, size_t tupleNum, int attrType) {
 
     for (int i = 0; i < tupleNum; i++) {
         int *val = (int*)&column[i*attrType];
-        //printf("i: %d\tval: %d\n", i, *val);
         //if (*val > 100000)
-        //    printf("i: %d\tval: %d\n", i, *val);
+        // printf("i: %d\tval: %d\n", i, *val);
         if (localMax < *val) {
             localMax = *val;
         }
@@ -952,7 +964,6 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
     int lgbIndex = -1, rgbIndex = -1;
 
     int quantizedScale = 1;  // quantization scale
-    //int quantizedScale = 7237036;
     //ldataColIndex = (int *)malloc(sizeof(int) * jNode->leftOutputAttrNum);
     //memset(ldataColIndex, -1, sizeof(int) * jNode->leftOutputAttrNum);
     
@@ -1014,19 +1025,6 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
 #endif
 
     } // end of contains groupBy keyword
-
-    //FIXME: hard code for SSB q2_1 -- breakdown3 requires p_brand1 as one dim, comment out if not q2_1
-/*    
-    printf("ldata2:%d\n", ldata2);
-    int update_M = getMaxVal(jNode->leftTable->content[0],jNode->leftTable->tupleNum, 4);
-    printf("p_brand1 max: %d\n", update_M+1);
-    MATRIX_M = update_M+1;
-
-    quantizedScale = getMaxVal(jNode->leftTable->content[ldataColIndex],
-            jNode->leftTable->tupleNum, jNode->leftOutputAttrType[0]);
-*/
-    
-//    printf("quantizedScale: %d\n", quantizedScale);
 
     struct gpu_timer initStart, end2endStart;
     // read row data from column store
@@ -1091,18 +1089,24 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
 #endif
         }
 
-        if (gb->leftAggNum == 1) 
-        {
+        if (gb->leftAggNum == 2 || (gb->groupByColNum == 2 && gb->leftAggNum == 1)) {
             CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&gpu_ldata,foreignKeySize));
-#ifdef DEBUG
             printf("cudaMalloc gpu_ldata column\n");
-#endif
-        } else if (gb->leftAggNum == 2) {
-            CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&gpu_ldata,foreignKeySize));
             CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&gpu_ldata2,foreignKeySize));
+            printf("cudaMalloc gpu_ldata2 column\n");
+            CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&gpu_rdata,primaryKeySize));
+            printf("cudaMalloc gpu_rdata column\n");
 #ifdef DEBUG
             printf("cudaMalloc gpu_ldata column\n");
             printf("cudaMalloc gpu_ldata2 column\n");
+#endif
+        }
+        else if (gb->leftAggNum == 1) 
+        {
+            printf("cudaMalloc gpu_ldata column\n");
+            CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&gpu_ldata,foreignKeySize));
+#ifdef DEBUG
+            printf("cudaMalloc gpu_ldata column\n");
 #endif
         }
 
@@ -1194,27 +1198,15 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
     }
 
     cudaMemcpyTime = cudaMemcpyStart.milliseconds_elapsed();
-    // TODO: determine whether to use 1) dense 2) cuSPARSE 3) blocked-GeMM (denseMM)
+    // determine whether to use 1) dense 2) cuSPARSE 3) blocked-GeMM (denseMM)
     // assume sparsity, A_nnz, B_nnz is given
         if (gb && gb->gbExp[gb->aggFuncIndex].func == SUM) 
         {
             if (gb->numFuncExpCol == 1) // only has one func keyword (groupBy not include) 
             {
-                //if (rValIndex[0] == -1)
-                if (gb->gbLeftColIndex && gb->gbRightColIndex) //groupBy left and right
-                {
-#ifdef CUSPARSE
-                    tcuspmm_gbAB(Annz, A_num_rows, A_num_cols,
-                                 Bnnz, B_num_rows, B_num_cols,
-                                 MATRIX_K,
-                                 leftTupleNum, jNode->leftTable->content[jNode->leftKeyIndex],
-                                 jNode->leftTable->content[gb->leftAggColIndex[0]],
-                                 left_gbWidth, jNode->leftTable->content[gbLeftIndex],
-                                 right_gbWidth, jNode->rightTable->content[gbRightIndex],
-                                 rightTupleNum, jNode->rightTable->content[jNode->rightKeyIndex], NULL);
-#endif
-                }
-                else if (gb->gbLeftColIndex && !gb->gbRightColIndex)
+
+
+                if (gb->gbLeftColIndex && gb->gbRightColIndex && !gb->rightAggNum)
                 {
 #ifdef CUSPARSE
             printf("SSB Q2_1b3\n");
@@ -1228,6 +1220,21 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
                         NULL);
 
 #else
+                    printf("SSB Q2_1b3 dense filling\n");
+                    //FIXME: hard code for SSB q2_1b3, p_brand1 as one dim
+                    /*    
+                        printf("ldata2:%d\n", ldata2);
+                        int update_M = getMaxVal(jNode->leftTable->content[0],jNode->leftTable->tupleNum, 4);
+                        printf("p_brand1 max: %d\n", update_M+1);
+                        printf("MATRIX_M before: %d\n", MATRIX_M);
+                        // MATRIX_M = update_M+1;
+                        // printf("MATRIX_M update: %d\n", MATRIX_M);
+
+                        quantizedScale = getMaxVal(jNode->leftTable->content[ldataColIndex],
+                                jNode->leftTable->tupleNum, jNode->leftOutputAttrType[0]);
+                        printf("quantizedScale: %d\n", quantizedScale);
+                    */
+    
                     struct gpu_timer fillStart;
 
                     if (ldata2 != -1) // specifically for Q2_1b3.sql
@@ -1338,6 +1345,19 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
                     }
 #endif
                 } // groupBy left 
+                else if (gb->gbLeftColIndex && gb->gbRightColIndex) //groupBy left and right
+                {
+#ifdef CUSPARSE
+                    tcuspmm_gbAB(Annz, A_num_rows, A_num_cols,
+                                 Bnnz, B_num_rows, B_num_cols,
+                                 MATRIX_K,
+                                 leftTupleNum, jNode->leftTable->content[jNode->leftKeyIndex],
+                                 jNode->leftTable->content[gb->leftAggColIndex[0]],
+                                 left_gbWidth, jNode->leftTable->content[gbLeftIndex],
+                                 right_gbWidth, jNode->rightTable->content[gbRightIndex],
+                                 rightTupleNum, jNode->rightTable->content[jNode->rightKeyIndex], NULL);
+#endif
+                }
                 else if (!gb->gbLeftColIndex && gb->gbRightColIndex)    
                 {
 #ifdef CUSPARSE
@@ -1443,7 +1463,7 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
             else if (!jNode->rightOutputAttrNum && gb->numFuncExpCol == 2 && gb->math_op == MULTIPLY)
             {
 #ifdef CUSPARSE
-            printf("SSB Q1-series sql using cuSPARSE\n");
+            // printf("SSB Q1-series sql using cuSPARSE\n");
             tcuspmm(Annz, A_num_rows, A_num_cols,
                     Bnnz, B_num_rows, B_num_cols,
                     MATRIX_K, foreignKeySize,
@@ -1451,8 +1471,7 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
                     rightTupleNum, jNode->rightTable->content[jNode->rightKeyIndex],
                     jNode->rightTable->content[0]); 
 #else
-
-            printf("SSB Q1-series using dense-filling\n"); 
+            // printf("SSB Q1-series using dense-filling\n");
             struct gpu_timer fillStart;
             CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&gpu_ldata,foreignKeySize));
             CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void**)&gpu_ldata2,foreignKeySize));
@@ -1504,7 +1523,7 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
                     printf("SSB Q4_1\n");
                     struct gpu_timer fillStart;
 
-                    if (ldata2 != -1) // specifically for Q2_1b3.sql
+                    if (ldata2 != -1)
                     {
                         printf("calling gpu_fill_2data\n");
                         gpu_fill_2data<<<(MAX_THREADS+leftTupleNum-1)/MAX_THREADS,MAX_THREADS>>> (gpu_fact,
@@ -1800,10 +1819,10 @@ struct tableNode * tcuJoin(struct joinNode *jNode, struct statistic *pp,
 
 #ifdef CUSPARSE
     // sparse-filling time metrics in tcuSpMM
-    if (gb && gb->numFuncExpCol == 2 && gb->math_op == MULTIPLY) {
-        printf("Matrices filling: %f ms\n", fillTime);
-         printf("TCU compute time: %f ms\n", tcu_compute_time);
-    }
+    // if (gb && gb->numFuncExpCol == 2 && gb->math_op == MULTIPLY) {
+    //     printf("Matrices filling: %f ms\n", fillTime);
+    //      printf("TCU compute time: %f ms\n", tcu_compute_time);
+    // }
 #else
     // dense-filling time metrics
     printf("Matrices filling: %f ms\n", fillTime);

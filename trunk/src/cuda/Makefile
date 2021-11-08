@@ -31,6 +31,9 @@ endif
 tcudb: tcu cpu
 	 $(NVCC) $(NVCCFLAGS) $(GENCODE_FLAGS) tableScan.o tcuSpMM.o tcuJoin.o driver.o $(LDFLAGS) -o TCUDB $(CUDA_LIB)
 
+tcudb_dense: tcu_dense cpu
+	 $(NVCC) $(NVCCFLAGS) $(GENCODE_FLAGS) tableScan.o tcuSpMM.o tcuJoin.o driver.o $(LDFLAGS) -o TCUDB $(CUDA_LIB)
+
 gpudb: gpu cpu
 	 $(NVCC) $(NVCCFLAGS) $(GENCODE_FLAGS) tableScan.o inviJoin.o hashJoin.o cuckoo.o materialize.o groupby.o orderBy.o driver.o $(LDFLAGS) -o GPUDATABASE
 
@@ -46,6 +49,8 @@ tcu: tableScan.cu tcuSpMM.cu tcuJoin.cu cuckoo.cu
 		$(NVCC) -c -g $(GENCODE_FLAGS) -DCUBLAS_HALF -DCUSPARSE tableScan.cu tcuSpMM.cu tcuJoin.cu
 #	$(NVCC) -c -g $(GENCODE_FLAGS) -DCUBLAS_HALF tableScan.cu tcuJoin.cu tcuSpMM.cu
 
+tcu_dense: tableScan.cu tcuSpMM.cu tcuJoin.cu cuckoo.cu
+	$(NVCC) -c -g $(GENCODE_FLAGS) -DCUBLAS_HALF tableScan.cu tcuJoin.cu tcuSpMM.cu
 
 blockGEMM: blockGEMMKernel.cu blockGEMM.cu tableScan.cu
 	$(NVCC) -c -g $(GENCODE_FLAGS) blockGEMMKernel.cu blockGEMM.cu tableScan.cu

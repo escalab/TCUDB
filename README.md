@@ -2,16 +2,18 @@
 
 # Requirements
 
-Some Python modules are require for `translate.py`(Python2.7) and `ssb_q1_enc.py`(Python3.7).
+Some Python modules are require for `translate.py` and `ssb_q1_enc.py`(Python3.7).
 ```
 config
+pybind11
 pandas
+scipy
 numpy
-sklearn.preprocessing
+sklearn
 os
 ```
 # How to generate SSBM data files
-In directory `trunk/test/dbgen`, using makefile.suite as a basis.
+In directory `trunk/test/dbgen`, using makefile.suite as a basis (WORKLOAD =SSBM).
 
 Type `make` to compile and to generate the SSBM dbgen executable.
 

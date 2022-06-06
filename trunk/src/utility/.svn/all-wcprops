@@ -1,0 +1,35 @@
+K 25
+svn:wc:ra_dav:version-url
+V 35
+/svn/!svn/ver/553/trunk/src/utility
+END
+dict.c
+K 25
+svn:wc:ra_dav:version-url
+V 42
+/svn/!svn/ver/553/trunk/src/utility/dict.c
+END
+columnSort.c
+K 25
+svn:wc:ra_dav:version-url
+V 48
+/svn/!svn/ver/553/trunk/src/utility/columnSort.c
+END
+Makefile
+K 25
+svn:wc:ra_dav:version-url
+V 44
+/svn/!svn/ver/499/trunk/src/utility/Makefile
+END
+rle.c
+K 25
+svn:wc:ra_dav:version-url
+V 41
+/svn/!svn/ver/553/trunk/src/utility/rle.c
+END
+soa.c
+K 25
+svn:wc:ra_dav:version-url
+V 41
+/svn/!svn/ver/553/trunk/src/utility/soa.c
+END

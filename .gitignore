@@ -1,0 +1,12 @@
+trunk/src/cuda/*.o
+trunk/.tmp/*.xml
+trunk/SQL2XML/*.pyc
+trunk/src/utility/gpuDBLoader
+trunk/src/cuda/GPUDATABASE
+trunk/src/utility/LINEORDER*
+trunk/src/utility/PART*
+trunk/src/utility/SUPPLIER*
+trunk/src/utility/DDATE*
+trunk/src/utility/CUSTOMER*
+trunk/src/cuda/driver.cu
+trunk/src/include/schema.h
